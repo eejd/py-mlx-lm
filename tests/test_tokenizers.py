@@ -9,7 +9,7 @@ from mlx_lm.tokenizer_utils import (
     SPMStreamingDetokenizer,
     TokenizerWrapper,
 )
-from mlx_lm.tool_parsers import pythonic
+from mlx_lm.tool_parsers import llama3, pythonic
 from mlx_lm.utils import load_tokenizer
 
 
@@ -133,7 +133,9 @@ class TestTokenizers(unittest.TestCase):
 
         tokenizer_repo = "mlx-community/Llama-3.2-1B-Instruct-4bit"
         tokenizer = load_tokenizer(tokenizer_repo)
-        self.assertFalse(tokenizer.has_tool_calling)
+        self.assertTrue(tokenizer.has_tool_calling)
+        self.assertEqual(tokenizer.tool_call_start, "<|python_tag|>")
+        self.assertEqual(tokenizer.tool_parser, llama3.parse_tool_call)
 
         tokenizer_repo = "LiquidAI/LFM2.5-1.2B-Instruct-MLX-8bit"
         tokenizer = load_tokenizer(tokenizer_repo)
@@ -160,6 +162,24 @@ class TestTokenizers(unittest.TestCase):
         self.assertEqual(
             _infer_tool_parser(FakeTokenizer(mistral_vocab, template)), "qwen3_coder"
         )
+        # The Llama 3.1+ template never names the <|python_tag|> token, so the parser
+        # needs the token in the vocab and the template's wording.
+        llama_vocab = {"<|python_tag|>": 128010, "hello": 1}
+        for marker in (
+            "Environment: ipython\n",
+            'Respond in the format {"name": function name, "parameters": '
+            "dictionary of argument name and its value}.",
+        ):
+            self.assertEqual(
+                _infer_tool_parser(FakeTokenizer(llama_vocab, "x " + marker)), "llama3"
+            )
+        # A Llama 3.0 vocab, or a template without tools (Llama 3.1 base), has no calls.
+        self.assertIsNone(_infer_tool_parser(FakeTokenizer({"hello": 1}, "Environment: ipython")))
+        self.assertIsNone(_infer_tool_parser(FakeTokenizer(llama_vocab, "{{ messages }}")))
+        self.assertIsNone(_infer_tool_parser(FakeTokenizer(llama_vocab)))
+        # Hermes 3 on Llama 3.2 has the token too, but its template is a <tool_call> one.
+        hermes = "<tool_call> tool_call.name Environment: ipython"
+        self.assertEqual(_infer_tool_parser(FakeTokenizer(llama_vocab, hermes)), "json_tools")
         # No marker anywhere means no parser.
         self.assertIsNone(_infer_tool_parser(FakeTokenizer({"hello": 1})))
 
