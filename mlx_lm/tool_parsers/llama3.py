@@ -78,19 +78,23 @@ def _to_call(obj: Any, names: set[str]) -> dict[str, Any] | None:
 def parse_calls(text: str, tools: Any | None = None) -> list[dict[str, Any]]:
     """Every call in ``text``; raises :class:`NotAToolCall` unless all of it is calls."""
     content = _drop_terminators(text).replace(tool_call_start, "")
-    # A second marker in one turn separates calls like `;` does.
-    body = _drop_terminators(text).replace(tool_call_start, ";")
     names = _declared_names(tools)
     decoder = json.JSONDecoder()
     calls = []
     pos = 0
     while True:
-        while pos < len(body) and (body[pos].isspace() or body[pos] == ";"):
-            pos += 1
-        if pos >= len(body):
+        # Between calls: white space, ``;`` and the marker, which also separates calls.
+        while pos < len(text):
+            if text[pos].isspace() or text[pos] == ";":
+                pos += 1
+            elif text.startswith(tool_call_start, pos):
+                pos += len(tool_call_start)
+            else:
+                break
+        if pos >= len(text) or text.startswith(_terminators, pos):
             break
         try:
-            obj, pos = decoder.raw_decode(body, pos)
+            obj, pos = decoder.raw_decode(text, pos)
         except json.JSONDecodeError:
             raise NotAToolCall(content) from None
         call = _to_call(obj, names)

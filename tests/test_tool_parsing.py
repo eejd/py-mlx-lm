@@ -1,5 +1,6 @@
 # Copyright © 2026 Apple Inc.
 
+import json
 import unittest
 
 from mlx_lm.tool_parsers import (
@@ -961,6 +962,21 @@ class TestToolParsing(unittest.TestCase):
             self.LLAMA3_TOOLS,
         )
         self.assertEqual(call["arguments"], {"city": "A &amp; B &quot;x&quot;"})
+
+    def test_llama3_marker_text_inside_a_value_is_kept(self):
+        for value in ("<|python_tag|>", "a <|python_tag|> b", "x<|eom_id|>y", "<|eot_id|>"):
+            with self.subTest(value=value):
+                call = llama3.parse_tool_call(
+                    json.dumps({"name": "get_weather", "parameters": {"city": value}}),
+                    self.LLAMA3_TOOLS,
+                )
+                self.assertEqual(call["arguments"], {"city": value})
+        # and the marker between two calls still separates them
+        a = json.dumps({"name": "get_weather", "parameters": {"city": "<|python_tag|>"}})
+        calls = llama3.parse_tool_call(
+            "<|python_tag|>" + a + "<|python_tag|>" + a, self.LLAMA3_TOOLS
+        )
+        self.assertEqual([c["arguments"] for c in calls], [{"city": "<|python_tag|>"}] * 2)
 
     def test_llama3_nested_and_unicode_arguments(self):
         call = llama3.parse_tool_call(
