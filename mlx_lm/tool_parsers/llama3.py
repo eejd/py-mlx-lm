@@ -2,20 +2,15 @@
 
 """Tool calls of Llama 3.1+ (3.1, 3.2, 3.3) with the JSON function-calling template.
 
-The template asks for ``{"name": <function name>, "parameters": <dict>}``. The model writes
-that behind the ``<|python_tag|>`` token, or bare when it is the first thing in the answer,
-and ends the turn with ``<|eom_id|>`` (a call whose result it waits for) or ``<|eot_id|>``.
-Both end tokens are stop tokens in the checkpoint's ``eos_token_id`` and are stripped by the
-server; one that is still in the text, as for a checkpoint that does not list ``<|eom_id|>``
-as a stop token, ends the call text.
+The model writes ``{"name": <function name>, "parameters": <dict>}`` behind the
+``<|python_tag|>`` token, or bare as the first thing in the answer. Several calls follow
+each other, separated by ``;`` or white space. The end tokens ``<|eom_id|>`` and
+``<|eot_id|>`` stop generation, so the server removes them. One that is still in the text
+ends the call text.
 
-Several calls are written one after another, separated by ``;`` or white space. The text is
-a call only if it is made up of calls and nothing else, and every call names a declared
-tool: a single call that does not fit (``<|python_tag|>`` followed by code, as in ipython
-mode, a built-in tool such as ``brave_search.call(...)``, a name that is not declared,
-JSON that is cut off) makes the whole text content, so a call is never run half-way.
-``parse_tool_call`` raises :class:`NotAToolCall` for that text, and the server returns the
-text as content, without the ``<|python_tag|>`` marker.
+The text is a call only if all of it is calls to declared tools. Anything else (code behind
+the tag, a built-in tool, an undeclared name, cut-off JSON) raises ``NotAToolCall``, and the
+server returns the text as content without the tag, so a call is never run half-way.
 """
 
 import json
@@ -27,7 +22,7 @@ from . import NotAToolCall
 
 tool_call_start = "<|python_tag|>"
 
-# The model ends a call with <|eom_id|> or <|eot_id|>, which stop generation.
+# A call ends with <|eom_id|> or <|eot_id|>, which stop generation.
 tool_call_end = ""
 
 _terminators = ("<|eom_id|>", "<|eot_id|>", "<|end_of_text|>")
@@ -115,12 +110,10 @@ def parse_tool_call(text: str, tools: Any | None = None):
 class BareToolCallFilter:
     """Recovers a call the model wrote without ``<|python_tag|>``.
 
-    The first answer to a request with tools is the bare JSON call, which the text state
-    machine does not see as one. The filter sits on the text the state machine emits in the
-    normal state. Text that cannot start a call (the first character that is not white space
-    is not ``{`` followed by a call key) is released at once. Anything that can is held back
-    until the end of the answer, and then returned as a call if all of it is calls to declared
-    tools, or released as text otherwise.
+    It sits on the text the state machine emits in the normal state. Text that cannot start
+    a call (not ``{`` and a call key after white space) is released at once. Other text is
+    held until the end of the answer, then returned as a call if all of it is calls to
+    declared tools, or released as text.
     """
 
     def __init__(self, tools: Any | None = None):
