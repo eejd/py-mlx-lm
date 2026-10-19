@@ -25,7 +25,7 @@ from mlx_lm.server import (
     ToolCallFormatter,
     _make_sampler,
 )
-from mlx_lm.tool_parsers import pythonic, qwen3_coder
+from mlx_lm.tool_parsers import llama3, pythonic, qwen3_coder
 from mlx_lm.utils import load
 
 
@@ -239,7 +239,7 @@ class TestBareToolCallFilter(unittest.TestCase):
 
     def test_recovered_call_parses_to_a_tool_call(self):
         _, calls = self.run_chunks([self.CALL + "\n</tool_call>"])
-        out = ToolCallFormatter(qwen3_coder.parse_tool_call, tools=None)(calls)
+        out, _ = ToolCallFormatter(qwen3_coder.parse_tool_call, tools=None)(calls)
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]["function"]["name"], "get_weather")
         self.assertEqual(json.loads(out[0]["function"]["arguments"]), {"city": "Tokyo"})
@@ -276,7 +276,7 @@ class TestBareToolCallFilter(unittest.TestCase):
         self.assertEqual(text, "")
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0].count("<parameter="), calls[0].count("</parameter>"))
-        out = ToolCallFormatter(qwen3_coder.parse_tool_call, tools=None)(calls)
+        out, _ = ToolCallFormatter(qwen3_coder.parse_tool_call, tools=None)(calls)
         self.assertEqual(
             json.loads(out[0]["function"]["arguments"]), {"city": "Tokyo", "days": "3"}
         )
@@ -287,7 +287,7 @@ class TestBareToolCallFilter(unittest.TestCase):
         text, calls = self.run_chunks([sloppy + "\n</tool_call>\n" + good + "\n</tool_call>"])
         self.assertEqual(text, "")
         self.assertEqual(len(calls), 2)
-        out = ToolCallFormatter(qwen3_coder.parse_tool_call, tools=None)(calls)
+        out, _ = ToolCallFormatter(qwen3_coder.parse_tool_call, tools=None)(calls)
         self.assertEqual(
             [(c["function"]["name"], json.loads(c["function"]["arguments"])) for c in out],
             [("get_weather", {"city": "Tokyo"}), ("read_file", {"path": "/a.py"})],
@@ -309,15 +309,19 @@ class TestBareToolCallFilter(unittest.TestCase):
         self.assertEqual(calls, [])
 
 
-class TestBareToolCallsThroughTheHandler(unittest.TestCase):
+class ScriptedHandler:
     """Real HTTP requests through APIHandler.handle_completion with a scripted token stream.
 
     Only the generation thread is replaced: ``ResponseGenerator.generate`` returns the
-    text chunks a model would produce, with the real qwen3_coder tool parser and the real
-    text state machine in the handler's loop.
+    text chunks a model would produce, with the real tool parser (``PARSER``) and the real
+    text state machine (``TRANSITIONS``) in the handler's loop.
     """
 
-    CALL = "<function=get_weather>\n<parameter=city>\nTokyo\n</parameter>\n</function>"
+    PARSER = staticmethod(qwen3_coder.parse_tool_call)
+    TRANSITIONS = {
+        "normal": [("<tool_call>", "tool")],
+        "tool": [("</tool_call>", "normal")],
+    }
     TOOLS = [
         {
             "type": "function",
@@ -357,13 +361,8 @@ class TestBareToolCallsThroughTheHandler(unittest.TestCase):
             ctx = GenerationContext(
                 has_tool_calling=True,
                 has_thinking=False,
-                tool_parser=qwen3_coder.parse_tool_call,
-                text_sm=TextStateMachine(
-                    {
-                        "normal": [("<tool_call>", "tool")],
-                        "tool": [("</tool_call>", "normal")],
-                    }
-                ),
+                tool_parser=self.PARSER,
+                text_sm=TextStateMachine(self.TRANSITIONS),
                 initial_state="normal",
                 prompt=[1, 2, 3],
             )
@@ -407,6 +406,11 @@ class TestBareToolCallsThroughTheHandler(unittest.TestCase):
                 calls += delta.get("tool_calls") or []
                 finish = choice.get("finish_reason") or finish
             return {"content": content, "tool_calls": calls}, finish
+
+
+
+class TestBareToolCallsThroughTheHandler(ScriptedHandler, unittest.TestCase):
+    CALL = "<function=get_weather>\n<parameter=city>\nTokyo\n</parameter>\n</function>"
 
     def check_call(self, message, finish):
         self.assertEqual(finish, "tool_calls")
@@ -460,6 +464,120 @@ class TestBareToolCallsThroughTheHandler(unittest.TestCase):
         message, finish = self.post(["<function=get_weather>\n</function>"], tools=None)
         self.assertEqual(finish, "stop")
         self.assertIn("<function=get_weather>", message["content"])
+
+
+class TestLlama3ToolCallsThroughTheHandler(ScriptedHandler, unittest.TestCase):
+    """Llama 3.x writes ``<|python_tag|>{json}`` or, as its first answer, the bare JSON."""
+
+    PARSER = staticmethod(llama3.parse_tool_call)
+    TRANSITIONS = {"normal": [("<|python_tag|>", "tool")], "tool": []}
+    CALL = '{"name": "get_weather", "parameters": {"city": "Tokyo"}}'
+
+    def check_call(self, message, finish, city="Tokyo"):
+        self.assertEqual(finish, "tool_calls")
+        calls = message["tool_calls"]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["function"]["name"], "get_weather")
+        self.assertEqual(json.loads(calls[0]["function"]["arguments"]), {"city": city})
+        self.assertFalse((message["content"] or "").strip())
+
+    def check_content(self, message, finish, content):
+        self.assertEqual(finish, "stop")
+        self.assertEqual(message["content"], content)
+        self.assertFalse(message.get("tool_calls"))
+
+    def chunked(self, text, size):
+        return [text[i : i + size] for i in range(0, len(text), size)]
+
+    def test_tagged_call(self):
+        for stream in (False, True):
+            for size in (1, 5, 1000):
+                message, finish = self.post(
+                    self.chunked("<|python_tag|>" + self.CALL, size), stream=stream
+                )
+                self.check_call(message, finish)
+                self.assertNotIn("python_tag", message["content"] or "")
+
+    def test_bare_call(self):
+        for stream in (False, True):
+            for size in (1, 5, 1000):
+                message, finish = self.post(self.chunked(self.CALL, size), stream=stream)
+                self.check_call(message, finish)
+
+    def test_bare_call_with_the_type_key(self):
+        call = '{"type": "function", "name": "get_weather", "parameters": {"city": "Oslo"}}'
+        for stream in (False, True):
+            message, finish = self.post(self.chunked(call, 3), stream=stream)
+            self.check_call(message, finish, city="Oslo")
+
+    def test_semicolon_separated_calls_are_all_returned(self):
+        other = self.CALL.replace("Tokyo", "Paris")
+        for text in ("<|python_tag|>" + self.CALL + "; " + other, self.CALL + ";" + other):
+            for stream in (False, True):
+                message, finish = self.post(self.chunked(text, 7), stream=stream)
+                self.assertEqual(finish, "tool_calls")
+                self.assertEqual(
+                    [json.loads(c["function"]["arguments"])["city"] for c in message["tool_calls"]],
+                    ["Tokyo", "Paris"],
+                )
+                if stream:
+                    self.assertEqual([c["index"] for c in message["tool_calls"]], [0, 1])
+
+    def test_text_before_the_tag_is_kept(self):
+        message, finish = self.post(["Let me check. ", "<|python_tag|>", self.CALL])
+        self.assertEqual(finish, "tool_calls")
+        self.assertEqual(message["content"], "Let me check. ")
+        self.assertEqual(len(message["tool_calls"]), 1)
+
+    def test_code_after_the_tag_is_content_without_the_tag(self):
+        text = "import json\nprint(json.dumps({'a': 1}))"
+        for stream in (False, True):
+            message, finish = self.post(["<|python_tag|>", text], stream=stream)
+            self.check_content(message, finish, text)
+
+    def test_undeclared_name_is_content(self):
+        call = self.CALL.replace("get_weather", "get_time")
+        for stream in (False, True):
+            message, finish = self.post(["<|python_tag|>", call], stream=stream)
+            self.check_content(message, finish, call)
+            message, finish = self.post([call], stream=stream)
+            self.check_content(message, finish, call)
+
+    def test_malformed_json_is_content(self):
+        cut = self.CALL[:-8]
+        for stream in (False, True):
+            message, finish = self.post(["<|python_tag|>", cut], stream=stream)
+            self.check_content(message, finish, cut)
+            message, finish = self.post(self.chunked(cut, 4), stream=stream)
+            self.check_content(message, finish, cut)
+
+    def test_a_call_with_trailing_prose_is_not_run(self):
+        text = self.CALL + " That is the weather call."
+        message, finish = self.post(self.chunked(text, 6))
+        self.check_content(message, finish, text)
+
+    def test_json_answer_that_is_not_a_call_is_content(self):
+        for text in ('{"city": "Tokyo", "temp": 21}', '{"name": "Tokyo", "temp": 21}'):
+            for stream in (False, True):
+                message, finish = self.post(self.chunked(text, 3), stream=stream)
+                self.check_content(message, finish, text)
+
+    def test_plain_text_is_unchanged(self):
+        message, finish = self.post(["It is ", "sunny in ", "Tokyo."])
+        self.check_content(message, finish, "It is sunny in Tokyo.")
+
+    def test_without_tools_the_tag_text_is_content(self):
+        message, finish = self.post(["<|python_tag|>", self.CALL], tools=None)
+        self.check_content(message, finish, self.CALL)
+
+    def test_end_of_turn_token_in_the_text_ends_the_call(self):
+        message, finish = self.post(["<|python_tag|>", self.CALL + "<|eom_id|>"])
+        self.check_call(message, finish)
+
+    def test_html_entities_in_arguments_are_kept(self):
+        call = '{"name": "get_weather", "parameters": {"city": "A &amp; B &lt;1&gt;"}}'
+        message, finish = self.post(["<|python_tag|>", call])
+        self.check_call(message, finish, city="A &amp; B &lt;1&gt;")
 
 
 class TestTextStateMachine(unittest.TestCase):
@@ -600,7 +718,7 @@ class TestToolCallFormatter(unittest.TestCase):
             'grocery.order(items=[{"name": "noodles", "organic": true}])]'
         )
 
-        tool_calls = formatter([raw_tool_call])
+        tool_calls, content = formatter([raw_tool_call])
 
         self.assertEqual(
             [tc["function"]["name"] for tc in tool_calls],
@@ -611,6 +729,29 @@ class TestToolCallFormatter(unittest.TestCase):
             json.loads(tool_calls[1]["function"]["arguments"]),
             {"items": [{"name": "noodles", "organic": True}]},
         )
+        self.assertEqual(content, "")
+        self.assertTrue(formatter.made_call)
+
+    def test_text_that_is_not_a_call_is_returned_as_content(self):
+        tools = [{"type": "function", "function": {"name": "get_time"}}]
+        formatter = ToolCallFormatter(llama3.parse_tool_call, tools)
+
+        tool_calls, content = formatter(["print(1)"])
+
+        self.assertEqual((tool_calls, content), ([], "print(1)"))
+        self.assertFalse(formatter.made_call)
+
+        tool_calls, content = formatter(['{"name": "get_time", "parameters": {}}', "x = 1"])
+
+        self.assertEqual([tc["function"]["name"] for tc in tool_calls], ["get_time"])
+        self.assertEqual(content, "x = 1")
+        self.assertTrue(formatter.made_call)
+
+    def test_a_call_cut_short_is_dropped(self):
+        formatter = ToolCallFormatter(qwen3_coder.parse_tool_call, tools=None)
+
+        self.assertEqual(formatter(["<function=a>\n<parameter=b>"]), ([], ""))
+        self.assertTrue(formatter.made_call)
 
 
 class TestServer(unittest.TestCase):

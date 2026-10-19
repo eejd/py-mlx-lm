@@ -626,6 +626,15 @@ def _is_bpe_decoder(decoder):
     return isinstance(decoder, dict) and decoder.get("type", None) == "ByteLevel"
 
 
+def _is_llama3_tool_template(chat_template):
+    """The Llama 3.1+ template that asks for JSON calls. It never names the
+    ``<|python_tag|>`` token, which the model writes before a call."""
+    return isinstance(chat_template, str) and (
+        "Environment: ipython" in chat_template
+        or "dictionary of argument name and its value" in chat_template
+    )
+
+
 def _infer_tool_parser(tokenizer):
     """Attempt to auto-infer a tool parser from the chat template or vocab."""
     chat_template = tokenizer.chat_template
@@ -669,6 +678,8 @@ def _infer_tool_parser(tokenizer):
     vocab = tokenizer.get_vocab()
     if _is_xtml_vocab(vocab):
         return "kimi_k3"
+    elif "<|python_tag|>" in vocab and _is_llama3_tool_template(chat_template):
+        return "llama3"
     elif "<|tool_call_start|>" in vocab and "<|tool_call_end|>" in vocab:
         return "pythonic"
     elif "[TOOL_CALLS]" in vocab:

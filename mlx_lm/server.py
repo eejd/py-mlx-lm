@@ -50,6 +50,7 @@ from .generate import (
 from .models.cache import LRUPromptCache, make_prompt_cache
 from .processors import load_processor
 from .sample_utils import make_logits_processors, make_sampler
+from .tool_parsers import NotAToolCall
 from .utils import (
     _parse_size,
     load,
@@ -109,8 +110,14 @@ class BareToolCallFilter:
 
     @classmethod
     def for_parser(cls, tool_parser, tools=None):
-        """A filter for ``tool_parser``'s module if it declares bare-call markers, else None."""
+        """A filter for ``tool_parser``'s module if it declares bare-call markers, else None.
+
+        A module can instead provide its own filter, a ``bare_tool_call_filter(tools)`` function
+        that returns an object with this class's ``feed`` and ``flush``.
+        """
         module = sys.modules.get(getattr(tool_parser, "__module__", ""))
+        if (factory := getattr(module, "bare_tool_call_filter", None)) is not None:
+            return factory(tools)
         start = getattr(module, "bare_tool_call_start", None)
         end = getattr(module, "bare_tool_call_end", None)
         if not start or not end:
@@ -280,7 +287,16 @@ class BareToolCallFilter:
 
 
 class ToolCallFormatter:
+    """Parses the raw call texts of a response into OpenAI tool calls.
+
+    Calling it returns ``(tool_calls, content)``. ``content`` is the text of a call that its
+    parser (see ``NotAToolCall``) says is not a call, to be returned as message text. A call
+    that fails to parse any other way is dropped. ``made_call`` tells whether any of the
+    texts so far was a call, parsed or not.
+    """
+
     def __init__(self, tool_parser, tools, streaming=False):
+        self.made_call = False
         self._idx = 0
         self._tool_parser = tool_parser
         self._tools = tools
@@ -300,23 +316,26 @@ class ToolCallFormatter:
         return out
 
     def __call__(self, tool_calls):
-        if not tool_calls:
-            return []
-
         result = []
+        content = ""
         for tool_text in tool_calls:
             try:
                 parsed = self._tool_parser(tool_text, self._tools)
+            except NotAToolCall as e:
+                content += e.content
+                continue
             except (ValueError, json.JSONDecodeError) as e:
+                self.made_call = True
                 logging.warning(
                     f"Failed to parse tool call ({type(e).__name__}: {e}) — "
                     f"tool text was likely truncated mid-generation."
                 )
                 continue
+            self.made_call = True
             if not isinstance(parsed, list):
                 parsed = [parsed]
             result.extend(self._format(tc) for tc in parsed)
-        return result
+        return result, content
 
 
 def convert_chat(messages: List[dict], role_mapping: Optional[dict] = None):
@@ -1822,7 +1841,6 @@ class APIHandler(BaseHTTPRequestHandler):
         prev_state = ctx.initial_state
         finish_reason = "stop"
         reasoning_text = ""
-        made_tool_call = False
         tool_text = ""
         tool_calls = []
         text = ""
@@ -1856,9 +1874,7 @@ class APIHandler(BaseHTTPRequestHandler):
                     ):
                         rest_text, rest_calls = bare_filter.flush()
                         text += rest_text
-                        if rest_calls:
-                            tool_calls.extend(rest_calls)
-                            made_tool_call = True
+                        tool_calls.extend(rest_calls)
 
                     if current_state == "reasoning":
                         reasoning_text += clean_text
@@ -1868,12 +1884,9 @@ class APIHandler(BaseHTTPRequestHandler):
                         if prev_state == "tool":
                             tool_calls.append(tool_text)
                             tool_text = ""
-                            made_tool_call = True
                         if bare_filter is not None:
                             clean_text, bare_calls = bare_filter.feed(clean_text)
-                            if bare_calls:
-                                tool_calls.extend(bare_calls)
-                                made_tool_call = True
+                            tool_calls.extend(bare_calls)
                         text += clean_text
                     prev_state = current_state
 
@@ -1889,10 +1902,11 @@ class APIHandler(BaseHTTPRequestHandler):
                     and current_state != "tool"
                     and (text or tool_calls or reasoning_text)
                 ):
+                    formatted_calls, not_calls = tool_formatter(tool_calls)
                     resp = self.generate_response(
-                        text,
+                        text + not_calls,
                         None,
-                        tool_calls=tool_formatter(tool_calls),
+                        tool_calls=formatted_calls,
                         reasoning_text=reasoning_text,
                     )
                     self.wfile.write(f"data: {json.dumps(resp)}\n\n".encode())
@@ -1906,23 +1920,24 @@ class APIHandler(BaseHTTPRequestHandler):
 
             if prev_state == "tool" and tool_text:
                 tool_calls.append(tool_text)
-                made_tool_call = True
 
             if bare_filter is not None:
                 rest_text, rest_calls = bare_filter.flush()
                 text += rest_text
-                if rest_calls:
-                    tool_calls.extend(rest_calls)
-                    made_tool_call = True
+                tool_calls.extend(rest_calls)
 
-            if finish_reason == "stop" and made_tool_call:
+            # Text the parser says is not a call is part of the message
+            formatted_calls, not_calls = tool_formatter(tool_calls)
+            text += not_calls
+
+            if finish_reason == "stop" and tool_formatter.made_call:
                 finish_reason = "tool_calls"
 
             if self.stream:
                 resp = self.generate_response(
                     text,
                     finish_reason,
-                    tool_calls=tool_formatter(tool_calls),
+                    tool_calls=formatted_calls,
                     reasoning_text=reasoning_text,
                 )
                 self.wfile.write(f"data: {json.dumps(resp)}\n\n".encode())
@@ -1951,7 +1966,7 @@ class APIHandler(BaseHTTPRequestHandler):
                     top_tokens=top_tokens,
                     tokens=tokens,
                     reasoning_text=reasoning_text,
-                    tool_calls=tool_formatter(tool_calls),
+                    tool_calls=formatted_calls,
                 )
                 if logging.getLogger().isEnabledFor(logging.DEBUG):
                     response_debug = json.dumps(resp, indent="\t")

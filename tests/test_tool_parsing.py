@@ -1,14 +1,17 @@
 # Copyright © 2026 Apple Inc.
 
+import json
 import unittest
 
 from mlx_lm.tool_parsers import (
+    NotAToolCall,
     function_gemma,
     gemma4,
     glm47,
     json_tools,
     kimi_k2,
     kimi_k3,
+    llama3,
     longcat,
     minicpm5,
     minimax_m2,
@@ -908,6 +911,151 @@ class TestToolParsing(unittest.TestCase):
         )
         tool_call = qwen3_coder.parse_tool_call(test_case, tools)
         self.assertEqual(tool_call["arguments"], {"path": "a>b"})
+
+    LLAMA3_TOOLS = [
+        {"type": "function", "function": {"name": "get_weather"}},
+        {"type": "function", "function": {"name": "get_time"}},
+    ]
+
+    def test_llama3_call_forms(self):
+        weather = dict(name="get_weather", arguments={"city": "Paris"})
+        for text in (
+            '{"name": "get_weather", "parameters": {"city": "Paris"}}',
+            '{"name": "get_weather", "arguments": {"city": "Paris"}}',
+            '{"type": "function", "name": "get_weather", "parameters": {"city": "Paris"}}',
+            '{"name": "get_weather", "arguments": "{\\"city\\": \\"Paris\\"}"}',
+            ' \n{"name": "get_weather", "parameters": {"city": "Paris"}}\n',
+            '{"name": "get_weather", "parameters": {"city": "Paris"}}<|eom_id|>',
+            '{"name": "get_weather", "parameters": {"city": "Paris"}}<|eot_id|>junk',
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(llama3.parse_tool_call(text, self.LLAMA3_TOOLS), weather)
+
+    def test_llama3_no_parameters(self):
+        self.assertEqual(
+            llama3.parse_tool_call('{"name": "get_time"}', self.LLAMA3_TOOLS),
+            dict(name="get_time", arguments={}),
+        )
+
+    def test_llama3_id_is_passed_on(self):
+        call = llama3.parse_tool_call(
+            '{"name": "get_time", "parameters": {}, "id": "call_1"}', self.LLAMA3_TOOLS
+        )
+        self.assertEqual(call["id"], "call_1")
+
+    def test_llama3_several_calls(self):
+        a = '{"name": "get_weather", "parameters": {"city": "Paris"}}'
+        b = '{"name": "get_time", "parameters": {"tz": "CET"}}'
+        expected = [
+            dict(name="get_weather", arguments={"city": "Paris"}),
+            dict(name="get_time", arguments={"tz": "CET"}),
+        ]
+        for sep in ("; ", ";", "\n", " ", ";\n", "<|python_tag|>", "; <|python_tag|>"):
+            with self.subTest(sep=sep):
+                self.assertEqual(
+                    llama3.parse_tool_call(a + sep + b, self.LLAMA3_TOOLS), expected
+                )
+
+    def test_llama3_arguments_are_not_entity_decoded(self):
+        call = llama3.parse_tool_call(
+            '{"name": "get_weather", "parameters": {"city": "A &amp; B &quot;x&quot;"}}',
+            self.LLAMA3_TOOLS,
+        )
+        self.assertEqual(call["arguments"], {"city": "A &amp; B &quot;x&quot;"})
+
+    def test_llama3_marker_text_inside_a_value_is_kept(self):
+        for value in ("<|python_tag|>", "a <|python_tag|> b", "x<|eom_id|>y", "<|eot_id|>"):
+            with self.subTest(value=value):
+                call = llama3.parse_tool_call(
+                    json.dumps({"name": "get_weather", "parameters": {"city": value}}),
+                    self.LLAMA3_TOOLS,
+                )
+                self.assertEqual(call["arguments"], {"city": value})
+        # and the marker between two calls still separates them
+        a = json.dumps({"name": "get_weather", "parameters": {"city": "<|python_tag|>"}})
+        calls = llama3.parse_tool_call(
+            "<|python_tag|>" + a + "<|python_tag|>" + a, self.LLAMA3_TOOLS
+        )
+        self.assertEqual([c["arguments"] for c in calls], [{"city": "<|python_tag|>"}] * 2)
+
+    def test_llama3_nested_and_unicode_arguments(self):
+        call = llama3.parse_tool_call(
+            '{"name": "get_weather", "parameters": {"city": "Zürich", "opts": {"days": [1, 2]}}}',
+            self.LLAMA3_TOOLS,
+        )
+        self.assertEqual(
+            call["arguments"], {"city": "Zürich", "opts": {"days": [1, 2]}}
+        )
+
+    def test_llama3_text_that_is_not_a_call_is_content(self):
+        weather = '{"name": "get_weather", "parameters": {"city": "Paris"}}'
+        cases = [
+            # ipython mode: code behind the tag, and the built-in tools
+            ("import json\nprint(json.dumps({}))", "import json\nprint(json.dumps({}))"),
+            ('brave_search.call(query="x")', 'brave_search.call(query="x")'),
+            # cut off
+            (weather[:-5], weather[:-5]),
+            ("", ""),
+            # not declared
+            ('{"name": "rm", "parameters": {}}', '{"name": "rm", "parameters": {}}'),
+            # JSON that is not a call
+            ('{"city": "Paris"}', '{"city": "Paris"}'),
+            ('{"name": "get_weather", "parameters": [1]}',) * 2,
+            ('{"name": "get_weather", "parameters": {}, "extra": 1}',) * 2,
+            ('{"type": "tool", "name": "get_weather", "parameters": {}}',) * 2,
+            ('{"name": "get_weather", "parameters": {}, "arguments": {}}',) * 2,
+            ('{"name": 1, "parameters": {}}',) * 2,
+            ("[" + weather + "]", "[" + weather + "]"),
+            # one bad call makes all of it content
+            (weather + "; x = 1", weather + "; x = 1"),
+            (weather + '; {"name": "rm", "parameters": {}}',) * 2,
+            # the marker is not kept, nor what follows an end-of-turn token
+            ("<|python_tag|>x = 1<|eom_id|>y", "x = 1"),
+        ]
+        for text, content in cases:
+            with self.subTest(text=text):
+                with self.assertRaises(NotAToolCall) as ctx:
+                    llama3.parse_tool_call(text, self.LLAMA3_TOOLS)
+                self.assertEqual(ctx.exception.content, content)
+
+    def test_llama3_without_declared_tools_nothing_is_a_call(self):
+        for tools in (None, []):
+            with self.assertRaises(NotAToolCall):
+                llama3.parse_tool_call('{"name": "get_weather", "parameters": {}}', tools)
+
+    def test_llama3_bare_call_filter(self):
+        def run(chunks, tools=self.LLAMA3_TOOLS):
+            f = llama3.bare_tool_call_filter(tools)
+            text, calls = "", []
+            for chunk in chunks:
+                t, c = f.feed(chunk)
+                text += t
+                calls += c
+            t, c = f.flush()
+            return text + t, calls + c
+
+        call = '{"name": "get_weather", "parameters": {"city": "Paris"}}'
+        self.assertEqual(run([call]), ("", [call]))
+        self.assertEqual(run([" ", call[:3], call[3:]]), ("", [" " + call]))
+        # text that cannot be a call is released as soon as that is clear
+        f = llama3.bare_tool_call_filter(self.LLAMA3_TOOLS)
+        self.assertEqual(f.feed("Hello"), ("Hello", []))
+        self.assertEqual(f.feed(" {there}"), (" {there}", []))
+        f = llama3.bare_tool_call_filter(self.LLAMA3_TOOLS)
+        self.assertEqual(f.feed('{"na'), ("", []))
+        self.assertEqual(f.feed('x": 1}'), ('{"nax": 1}', []))
+        self.assertEqual(f.feed("more"), ("more", []))
+        # a call-shaped start is held to the end, and released if it is not a call
+        f = llama3.bare_tool_call_filter(self.LLAMA3_TOOLS)
+        self.assertEqual(f.feed('{"name": "get_weather", '), ("", []))
+        self.assertEqual(f.flush(), ('{"name": "get_weather", ', []))
+        self.assertEqual(run([call.replace("get_weather", "nope")]), (call.replace("get_weather", "nope"), []))
+        # the filter starts again after a flush
+        f = llama3.bare_tool_call_filter(self.LLAMA3_TOOLS)
+        f.feed("prose")
+        f.flush()
+        self.assertEqual(f.feed(call), ("", []))
+        self.assertEqual(f.flush(), ("", [call]))
 
 
 if __name__ == "__main__":
