@@ -18,4 +18,4 @@ The `fix/*` branches are the heads of the upstream PRs above and are left untouc
 `topic/*` branches are their content rebased onto `main` (v0.32.2).
 
 Tags: `v0.32.2-local01` (superseded: its qwen3-coder port raised `UnboundLocalError` for any request with tools to a
-bare-call parser) `v0.32.2-local02` and `v0.32.2-local03` (current, tests only over local02; the flush now runs per segment, with handler-level tests).
+bare-call parser) `v0.32.2-local02` and `v0.32.2-local03` (tests only over local02; the flush now runs per segment, with handler-level tests; local03 is superseded by local04) and `v0.32.2-local04` (current: local03 + `topic/llama3-tool-parser`; **behaviour change for callers of `mlx_lm.server.ToolCallFormatter`:** it returns `(tool_calls, content)` instead of a list).
