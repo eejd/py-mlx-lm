@@ -26,7 +26,7 @@ from mlx_lm.server import (
     ToolCallFormatter,
     _make_sampler,
 )
-from mlx_lm.tool_parsers import llama3, pythonic, qwen3_coder
+from mlx_lm.tool_parsers import llama3, mistral, pythonic, qwen3_coder
 from mlx_lm.utils import load
 
 
@@ -1861,6 +1861,36 @@ class TestIgnoreEos(unittest.TestCase):
             ("length", " Done", ["get_weather"]),
         )
 
+    def test_mistral_calls_with_text_after_an_ignored_eos(self):
+        # Mistral has no end marker either. A header call keeps the call and drops
+        # the later text; a JSON list call is dropped, and the text with it.
+        encode = self.response_generator.model_provider.tokenizer.encode
+        header = encode(
+            '[TOOL_CALLS]get_weather[ARGS]{"city": "Tokyo"}', add_special_tokens=False
+        )
+        listed = encode(
+            '[TOOL_CALLS][{"name": "get_weather", "arguments": {"city": "Tokyo"}}]',
+            add_special_tokens=False,
+        )
+        more = encode(" Hello", add_special_tokens=False)
+        for call in (header, listed):
+            self.assertEqual(
+                self.tool_request(mistral, [*call, self.eos]),
+                ("tool_calls", None, ["get_weather"]),
+            )
+            self.assertEqual(
+                self.tool_request(mistral, [*call, self.eos], ignore_eos=True),
+                ("length", None, ["get_weather"]),
+            )
+        self.assertEqual(
+            self.tool_request(mistral, [*header, self.eos, *more], ignore_eos=True),
+            ("length", None, ["get_weather"]),
+        )
+        self.assertEqual(
+            self.tool_request(mistral, [*listed, self.eos, *more], ignore_eos=True),
+            ("length", None, []),
+        )
+
 
 class TestIgnoreEosWithDraftModel(TestIgnoreEos):
     """The same requests with a draft model, so every request is speculative.
@@ -1883,6 +1913,7 @@ class TestIgnoreEosWithDraftModel(TestIgnoreEos):
     test_a_call_that_ends_at_eos_is_kept_when_eos_is_the_last_token = None
     test_text_after_an_ignored_eos_joins_a_call_without_an_end_marker = None
     test_a_call_with_an_end_marker_is_kept_when_text_follows_an_ignored_eos = None
+    test_mistral_calls_with_text_after_an_ignored_eos = None
 
     def send(self, *args, seed=None, **kwargs):
         return super().send(*args, seed=7 if seed is None else seed, **kwargs)

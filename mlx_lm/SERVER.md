@@ -82,11 +82,14 @@ curl localhost:8080/v1/chat/completions \
   (`finish_reason` is `"length"`) and `stop` (`"stop"`) end it. EOS tokens
   count in `completion_tokens` but add no text. Other special tokens decode as
   usual. Tool calls: a call that has an end marker (such as `</tool_call>`)
-  is parsed as before, and text after the EOS token is message content. For a
-  parser that has no end marker (Llama 3, Mistral) the call ends at the EOS
-  token, so text written after an ignored EOS token joins the call text, the
-  call is not parsed, and the whole text is returned as content. The request
-  then ends with `"length"`, not `"tool_calls"`, also when the call is parsed.
+  is parsed as before, and text after the EOS token is message content. A
+  parser with no end marker (Llama 3, Mistral) ends the call at the EOS
+  token, so text written after an ignored EOS token joins the call text. For
+  Llama 3 the call is then not parsed and the whole text is returned as
+  content. For Mistral a `name[ARGS]{...}` call is still parsed and the later
+  text is dropped, and a `[{"name": ..., "arguments": ...}]` call is dropped
+  with the text, with only a warning in the log. The request ends with
+  `"length"`, not `"tool_calls"`, also when a call is returned.
   Defaults to `false`. `null` is the same as `false`.
 
 - `stream`: (Optional) A boolean indicating if the response should be
