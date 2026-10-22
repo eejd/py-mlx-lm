@@ -76,6 +76,15 @@ curl localhost:8080/v1/chat/completions \
 - `max_tokens`: (Optional) An integer specifying the maximum number of tokens
   to generate. Defaults to `512`.
 
+- `ignore_eos`: (Optional) A boolean. If true, the end-of-sequence (EOS) tokens
+  of the model (`eos_token_id` of `config.json` and `generation_config.json`,
+  and the tokenizer EOS token) do not end the generation. Only `max_tokens`
+  (`finish_reason` is `"length"`) and `stop` (`"stop"`) end it. EOS tokens
+  count in `completion_tokens` but add no text. Other special tokens decode as
+  usual. A tool call ends in a text marker, not an EOS token, so it is still
+  parsed, but the request then ends with `"length"`, not `"tool_calls"`.
+  Defaults to `false`. `null` is the same as `false`.
+
 - `stream`: (Optional) A boolean indicating if the response should be
   streamed. If true, responses are sent as they are generated. Defaults to
   false.

@@ -1489,5 +1489,203 @@ class TestGenerationThreadDeath(unittest.TestCase):
             rg._await_response(Queue())
 
 
+class TestIgnoreEos(unittest.TestCase):
+    """`ignore_eos` through the HTTP handler and the real generation thread.
+
+    The model is real; its choices are scripted with a logits processor, so a request
+    emits a known token sequence (EOS tokens included) on both the batched path and
+    the serial path (a request with a seed).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.response_generator = ResponseGenerator(
+            DummyModelProvider(), LRUPromptCache()
+        )
+        cls.httpd = http.server.HTTPServer(
+            ("localhost", 0),
+            lambda *args, **kwargs: APIHandler(cls.response_generator, *args, **kwargs),
+        )
+        cls.port = cls.httpd.server_port
+        cls.server_thread = threading.Thread(target=cls.httpd.serve_forever)
+        cls.server_thread.daemon = True
+        cls.server_thread.start()
+        tokenizer = cls.response_generator.model_provider.tokenizer
+        cls.eos = sorted(tokenizer.eos_token_ids)[0]
+        cls.hello = tokenizer.encode("hello", add_special_tokens=False)
+        cls.world = tokenizer.encode(" world", add_special_tokens=False)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+        cls.httpd.server_close()
+        cls.server_thread.join()
+        cls.response_generator.stop_and_join()
+
+    @staticmethod
+    def forced(sequence):
+        """Logits processors that pick sequence[i] at step i, then the last."""
+
+        def make(args):
+            step = 0
+
+            def processor(tokens, logits):
+                nonlocal step
+                token = sequence[min(step, len(sequence) - 1)]
+                step += 1
+                return logits + mx.zeros(logits.shape[-1]).at[token].add(2000.0)
+
+            return [processor]
+
+        return make
+
+    def send(self, endpoint="chat", stream=False, seed=None, max_tokens=8, **extra):
+        """Returns (text, finish_reason, completion_tokens) for one request."""
+        body = {"model": "chat_model", "max_tokens": max_tokens, **extra}
+        if endpoint == "chat":
+            path = "/v1/chat/completions"
+            body["messages"] = [{"role": "user", "content": "Hi"}]
+        else:
+            path = "/v1/completions"
+            body["prompt"] = "Hi"
+        if seed is not None:
+            body["seed"] = seed
+        if stream:
+            body["stream"] = True
+            body["stream_options"] = {"include_usage": True}
+        r = requests.post(
+            f"http://localhost:{self.port}{path}", json=body, stream=stream
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        if not stream:
+            choice = r.json()["choices"][0]
+            message = choice.get("message")
+            text = choice["text"] if endpoint == "text" else message["content"]
+            usage = r.json()["usage"]
+            return text or "", choice["finish_reason"], usage["completion_tokens"]
+        text, finish, usage = "", None, None
+        for line in r.iter_lines():
+            if not line.startswith(b"data: ") or line.endswith(b"[DONE]"):
+                continue
+            chunk = json.loads(line[6:])
+            usage = chunk.get("usage") or usage
+            for choice in chunk["choices"]:
+                if endpoint == "text":
+                    text += choice["text"]
+                else:
+                    text += choice["delta"].get("content") or ""
+                finish = choice.get("finish_reason") or finish
+        return text, finish, usage["completion_tokens"]
+
+    def request(self, sequence, **kwargs):
+        # The generation thread reads the patched name when it takes the request,
+        # so the patch stays until the whole response is read.
+        with mock.patch("mlx_lm.server._make_logits_processors", self.forced(sequence)):
+            return self.send(**kwargs)
+
+    def every_path(self):
+        for endpoint in ("chat", "text"):
+            for stream in (False, True):
+                for seed in (None, 7):
+                    yield dict(endpoint=endpoint, stream=stream, seed=seed)
+
+    def test_default_stops_at_the_first_eos(self):
+        for path in self.every_path():
+            with self.subTest(**path):
+                self.assertEqual(self.request([self.eos], **path), ("", "stop", 1))
+
+    def test_false_and_null_are_the_default(self):
+        for value in (False, None):
+            for path in self.every_path():
+                with self.subTest(ignore_eos=value, **path):
+                    got = self.request([self.eos], ignore_eos=value, **path)
+                    self.assertEqual(got, ("", "stop", 1))
+
+    def test_ignore_eos_runs_to_max_tokens(self):
+        for max_tokens in (1, 2, 8):
+            for path in self.every_path():
+                with self.subTest(max_tokens=max_tokens, **path):
+                    got = self.request(
+                        [self.eos], ignore_eos=True, max_tokens=max_tokens, **path
+                    )
+                    # EOS tokens count and add no text; the limit ends the request
+                    self.assertEqual(got, ("", "length", max_tokens))
+
+    def test_ignore_eos_keeps_the_text_around_eos(self):
+        sequence = [*self.hello, self.eos, *self.world]
+        for path in self.every_path():
+            with self.subTest(**path):
+                got = self.request(
+                    sequence, ignore_eos=True, max_tokens=len(sequence), **path
+                )
+                self.assertEqual(got, ("hello world", "length", len(sequence)))
+                # without it the request ends at the EOS
+                got = self.request(sequence, **path)
+                self.assertEqual(got, ("hello", "stop", len(self.hello) + 1))
+
+    def test_stop_strings_still_stop_when_eos_is_ignored(self):
+        sequence = [*self.hello, self.eos, *self.world, *self.hello]
+        n = len(self.hello) + 1 + len(self.world)
+        for path in self.every_path():
+            with self.subTest(**path):
+                got = self.request(
+                    sequence, ignore_eos=True, stop=[" world"], max_tokens=32, **path
+                )
+                self.assertEqual(got, ("hello", "stop", n))
+
+    def test_streaming_matches_non_streaming(self):
+        sequence = [*self.hello, self.eos, *self.world, self.eos]
+        for endpoint in ("chat", "text"):
+            for seed in (None, 7):
+                for ignore_eos in (False, True):
+                    with self.subTest(endpoint=endpoint, seed=seed, eos=ignore_eos):
+                        got = [
+                            self.request(
+                                sequence,
+                                endpoint=endpoint,
+                                stream=stream,
+                                seed=seed,
+                                ignore_eos=ignore_eos,
+                                max_tokens=len(sequence),
+                            )
+                            for stream in (False, True)
+                        ]
+                        self.assertEqual(got[0], got[1])
+
+    def test_requests_with_and_without_it_do_not_share_state(self):
+        # the stop state machine is cached per model and stop words
+        for _ in range(2):
+            self.assertEqual(
+                self.request([self.eos], ignore_eos=True), ("", "length", 8)
+            )
+            self.assertEqual(self.request([self.eos]), ("", "stop", 1))
+
+    def test_concurrent_requests_each_get_their_own_setting(self):
+        results = {}
+
+        def run(i):
+            results[i] = self.send(ignore_eos=i % 2 == 0, stream=True)
+
+        threads = [threading.Thread(target=run, args=(i,)) for i in range(6)]
+        forced = self.forced([self.eos])
+        with mock.patch("mlx_lm.server._make_logits_processors", forced):
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        for i in range(6):
+            want = ("", "length", 8) if i % 2 == 0 else ("", "stop", 1)
+            self.assertEqual(results[i], want)
+
+    def test_non_boolean_ignore_eos_is_rejected(self):
+        for value in ("yes", 1, [True]):
+            r = requests.post(
+                f"http://localhost:{self.port}/v1/completions",
+                json={"prompt": "hi", "max_tokens": 2, "ignore_eos": value},
+            )
+            self.assertEqual(r.status_code, 400, value)
+            self.assertIn("ignore_eos", r.json()["error"])
+
+
 if __name__ == "__main__":
     unittest.main()
