@@ -151,6 +151,26 @@ class TestGenerate(unittest.TestCase):
         self.assertEqual([r.token for r in responses], [eos, eos, *word])
         self.assertEqual("".join(r.text for r in responses).strip(), "hello")
 
+    def test_stream_generate_speculative_ignore_eos(self):
+        eos = sorted(self.tokenizer.eos_token_ids)[0]
+        for ignore_eos, want in ((False, 1), (True, 7)):
+            responses = list(
+                stream_generate(
+                    self.model,
+                    self.tokenizer,
+                    self.tokenizer.encode("hello"),
+                    max_tokens=7,
+                    draft_model=self.model,
+                    num_draft_tokens=3,
+                    ignore_eos=ignore_eos,
+                    logits_processors=[self._forced([eos])],
+                )
+            )
+            self.assertEqual([r.token for r in responses], [eos] * want)
+            self.assertEqual(
+                responses[-1].finish_reason, "length" if ignore_eos else "stop"
+            )
+
     def test_make_stop_sequences_ignore_eos(self):
         tokenizer = self.tokenizer
         eos = sorted(tokenizer.eos_token_ids)[0]
