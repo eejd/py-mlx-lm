@@ -523,6 +523,7 @@ class GenerationArguments:
     top_logprobs: int
     seed: Optional[int]
     chat_template_kwargs: Optional[Dict[str, Any]]
+    ignore_eos: bool = False
 
 
 @dataclass
@@ -986,14 +987,14 @@ class ResponseGenerator:
 
         return prompt, segments, segment_types, initial_state, None
 
-    def _make_state_machine(self, model_key, tokenizer, stop_words):
+    def _make_state_machine(self, model_key, tokenizer, stop_words, ignore_eos=False):
         """Make (and cache) a StopSequences and TextStateMachine."""
-        cache_key = (model_key, tuple(stop_words))
+        cache_key = (model_key, tuple(stop_words), ignore_eos)
         rs = self._state_machine_cache.get(cache_key)
         if rs is not None:
             return rs
 
-        stop_sequences = make_stop_sequences(tokenizer, stop_words)
+        stop_sequences = make_stop_sequences(tokenizer, stop_words, ignore_eos)
         text_sm = make_text_state_machine(tokenizer, stop_words)
 
         if len(self._state_machine_cache) > 100:
@@ -1074,6 +1075,7 @@ class ResponseGenerator:
                         self.model_provider.model_key,
                         current_tokenizer,
                         args.stop_words,
+                        args.ignore_eos,
                     )
 
                     self._log_cache_stats()
@@ -1116,6 +1118,12 @@ class ResponseGenerator:
                         "detokenizer": current_tokenizer.detokenizer,
                         "segment_types": segment_types[::-1],
                         "top_logprobs": args.top_logprobs,
+                        # Ignored EOS tokens are counted but add no text.
+                        "no_text_tokens": (
+                            current_tokenizer.eos_token_ids
+                            if args.ignore_eos
+                            else frozenset()
+                        ),
                     }
                     # just making sure we don't leave a reference around
                     del cache
@@ -1214,11 +1222,13 @@ class ResponseGenerator:
                             result["detokenizer"].finalize()
                             text = result["detokenizer"].last_segment
                         elif r.finish_reason == "length":
-                            result["detokenizer"].add_token(r.token)
+                            if r.token not in result["no_text_tokens"]:
+                                result["detokenizer"].add_token(r.token)
                             result["detokenizer"].finalize()
                             text = result["detokenizer"].last_segment
                         else:
-                            result["detokenizer"].add_token(r.token)
+                            if r.token not in result["no_text_tokens"]:
+                                result["detokenizer"].add_token(r.token)
                             text = result["detokenizer"].last_segment
 
                         result["rqueue"].put(
@@ -1283,6 +1293,7 @@ class ResponseGenerator:
                 self.model_provider.model_key,
                 tokenizer,
                 args.stop_words,
+                args.ignore_eos,
             )
 
             # Start the generation context
@@ -1334,6 +1345,7 @@ class ResponseGenerator:
             for gen in stream_generate(
                 model=model,
                 stream=stream,
+                ignore_eos=args.ignore_eos,
                 tokenizer=tokenizer,
                 prompt=rest,
                 max_tokens=args.max_tokens,
@@ -1561,6 +1573,7 @@ class APIHandler(BaseHTTPRequestHandler):
         self.xtc_probability = self.body.get("xtc_probability", 0.0)
         self.xtc_threshold = self.body.get("xtc_threshold", 0.1)
         self.logit_bias = self.body.get("logit_bias", None)
+        self.ignore_eos = self.body.get("ignore_eos")
         self.logprobs = self.body.get("logprobs", False)
         self.top_logprobs = self.body.get("top_logprobs", -1)
         self.seed = self.body.get("seed", None)
@@ -1636,6 +1649,7 @@ class APIHandler(BaseHTTPRequestHandler):
         self._validate("adapter", str, optional=True)
         self._validate("seed", int, optional=True)
         self._validate("logit_bias", dict, optional=True)
+        self._validate("ignore_eos", bool, optional=True)
 
         if self.logit_bias is not None:
             try:
@@ -1793,6 +1807,7 @@ class APIHandler(BaseHTTPRequestHandler):
             top_logprobs=self.top_logprobs,
             seed=self.seed,
             chat_template_kwargs=self.chat_template_kwargs,
+            ignore_eos=bool(self.ignore_eos),
         )
 
         # Keep connection allive during long prompt processing (and also log

@@ -671,6 +671,7 @@ def stream_generate(
     max_tokens: int = 256,
     draft_model: Optional[nn.Module] = None,
     stream: mx.Stream | mx.ThreadLocalStream = generation_stream,
+    ignore_eos: bool = False,
     **kwargs,
 ) -> Generator[GenerationResponse, None, None]:
     """
@@ -686,6 +687,8 @@ def stream_generate(
         draft_model (Optional[nn.Module]): An optional draft model. If provided
           then speculative decoding is used. The draft model must use the same
           tokenizer as the main model. Default: ``None``.
+        ignore_eos (bool): Do not stop on the EOS tokens. They count as
+          generated tokens but add no text. Default: ``False``.
         kwargs: The remaining options get passed to :func:`generate_step`.
           See :func:`generate_step` for more details.
 
@@ -736,10 +739,12 @@ def stream_generate(
                 prompt_time = time.perf_counter() - tic
                 prompt_tps = prompt.size / prompt_time
                 tic = time.perf_counter()
-            if token in tokenizer.eos_token_ids:
+            is_eos = token in tokenizer.eos_token_ids
+            if is_eos and not ignore_eos:
                 break
 
-            detokenizer.add_token(token)
+            if not is_eos:
+                detokenizer.add_token(token)
             if (n + 1) == max_tokens:
                 break
 
@@ -767,7 +772,7 @@ def stream_generate(
             generation_tokens=n + 1,
             generation_tps=(n + 1) / (time.perf_counter() - tic),
             peak_memory=mx.get_peak_memory() / 1e9,
-            finish_reason="stop" if token in tokenizer.eos_token_ids else "length",
+            finish_reason="stop" if is_eos and not ignore_eos else "length",
         )
 
 
@@ -1036,9 +1041,12 @@ class TextStateMachine:
         return (s, trie, states, ""), s
 
 
-def make_stop_sequences(tokenizer, stop_words=None):
-    """Build StopSequences from EOS tokens and stop words."""
-    stop_sequences = [(t,) for t in tokenizer.eos_token_ids]
+def make_stop_sequences(tokenizer, stop_words=None, ignore_eos=False):
+    """Build StopSequences from EOS tokens and stop words.
+
+    With ``ignore_eos`` the EOS tokens do not stop the generation.
+    """
+    stop_sequences = [] if ignore_eos else [(t,) for t in tokenizer.eos_token_ids]
     for w in stop_words or []:
         stop_sequences.append(tuple(tokenizer.encode(w, add_special_tokens=False)))
     return StopSequences(stop_sequences)

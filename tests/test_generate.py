@@ -15,6 +15,7 @@ from mlx_lm.generate import (
     batch_generate,
     generate,
     generate_step,
+    make_stop_sequences,
     stream_generate,
 )
 from mlx_lm.models.cache import KVCache, RotatingKVCache
@@ -84,6 +85,139 @@ class TestGenerate(unittest.TestCase):
         ):
             tokens.append(response.token)
         self.assertEqual(len(tokens), 4)
+
+    def _forced(self, sequence):
+        """A logits processor that picks sequence[i] at step i, then the last."""
+        step = 0
+
+        def processor(tokens, logits):
+            nonlocal step
+            token = sequence[min(step, len(sequence) - 1)]
+            step += 1
+            bias = mx.zeros(logits.shape[-1]).at[token].add(2000.0)
+            return logits + bias
+
+        return processor
+
+    def test_stream_generate_stops_on_eos_by_default(self):
+        eos = sorted(self.tokenizer.eos_token_ids)[0]
+        responses = list(
+            stream_generate(
+                self.model,
+                self.tokenizer,
+                self.tokenizer.encode("hello"),
+                max_tokens=8,
+                logits_processors=[self._forced([eos])],
+            )
+        )
+        self.assertEqual([r.token for r in responses], [eos])
+        self.assertEqual(responses[-1].finish_reason, "stop")
+
+    def test_stream_generate_ignore_eos_runs_to_max_tokens(self):
+        eos = sorted(self.tokenizer.eos_token_ids)[0]
+        for max_tokens in (1, 2, 8):
+            responses = list(
+                stream_generate(
+                    self.model,
+                    self.tokenizer,
+                    self.tokenizer.encode("hello"),
+                    max_tokens=max_tokens,
+                    ignore_eos=True,
+                    logits_processors=[self._forced([eos])],
+                )
+            )
+            self.assertEqual([r.token for r in responses], [eos] * max_tokens)
+            self.assertEqual(
+                [r.finish_reason for r in responses[:-1]], [None] * (max_tokens - 1)
+            )
+            # The last token is an EOS and the limit is what ends the run.
+            self.assertEqual(responses[-1].finish_reason, "length")
+            # EOS tokens count but add no text.
+            self.assertEqual("".join(r.text for r in responses), "")
+
+    def test_stream_generate_ignore_eos_streams_text_around_eos(self):
+        eos = sorted(self.tokenizer.eos_token_ids)[0]
+        word = self.tokenizer.encode(" hello")
+        responses = list(
+            stream_generate(
+                self.model,
+                self.tokenizer,
+                self.tokenizer.encode("hello"),
+                max_tokens=2 + len(word),
+                ignore_eos=True,
+                logits_processors=[self._forced([eos, eos, *word])],
+            )
+        )
+        self.assertEqual([r.token for r in responses], [eos, eos, *word])
+        self.assertEqual("".join(r.text for r in responses).strip(), "hello")
+
+    def test_stream_generate_speculative_ignore_eos(self):
+        eos = sorted(self.tokenizer.eos_token_ids)[0]
+        for ignore_eos, want in ((False, 1), (True, 7)):
+            responses = list(
+                stream_generate(
+                    self.model,
+                    self.tokenizer,
+                    self.tokenizer.encode("hello"),
+                    max_tokens=7,
+                    draft_model=self.model,
+                    num_draft_tokens=3,
+                    ignore_eos=ignore_eos,
+                    logits_processors=[self._forced([eos])],
+                )
+            )
+            self.assertEqual([r.token for r in responses], [eos] * want)
+            self.assertEqual(
+                responses[-1].finish_reason, "length" if ignore_eos else "stop"
+            )
+
+    def test_make_stop_sequences_ignore_eos(self):
+        tokenizer = self.tokenizer
+        eos = sorted(tokenizer.eos_token_ids)[0]
+        word = tokenizer.encode(" world", add_special_tokens=False)
+
+        matcher = make_stop_sequences(tokenizer, [" world"]).matcher()
+        self.assertTrue(matcher.advance(eos))
+
+        matcher = make_stop_sequences(tokenizer, [" world"], ignore_eos=True).matcher()
+        self.assertFalse(matcher.advance(eos))
+        self.assertEqual(
+            [matcher.advance(t) for t in word], [False] * (len(word) - 1) + [True]
+        )
+
+    def test_batch_ignore_eos_runs_to_max_tokens_and_stop_words_still_stop(self):
+        eos = sorted(self.tokenizer.eos_token_ids)[0]
+        word = self.tokenizer.encode(" world", add_special_tokens=False)
+        prompt = self.tokenizer.encode("hello")
+
+        def run(ignore_eos, sequence, stop_words, max_tokens):
+            gen = BatchGenerator(self.model, max_tokens=max_tokens)
+            (uid,) = gen.insert(
+                [prompt],
+                logits_processors=[[self._forced(sequence)]],
+                stop_sequences=[
+                    make_stop_sequences(self.tokenizer, stop_words, ignore_eos)
+                ],
+            )
+            tokens, finish = [], None
+            while finish is None:
+                for r in gen.next_generated():
+                    tokens.append(r.token)
+                    finish = r.finish_reason
+            gen.close()
+            return tokens, finish
+
+        # default: the first EOS stops the request and is counted
+        self.assertEqual(run(False, [eos], [], 8), ([eos], "stop"))
+        # ignore_eos: exactly max_tokens, "length" even if the last token is EOS
+        for max_tokens in (1, 2, 8):
+            self.assertEqual(
+                run(True, [eos], [], max_tokens), ([eos] * max_tokens, "length")
+            )
+        # a stop string still stops after EOS tokens were ignored
+        self.assertEqual(
+            run(True, [eos, eos, *word], [" world"], 32), ([eos, eos, *word], "stop")
+        )
 
     def test_generate_with_processor(self):
         init_toks = self.tokenizer.encode("hello")
