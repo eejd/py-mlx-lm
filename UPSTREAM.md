@@ -11,9 +11,10 @@ branches below, merged with `--no-ff`. `main` mirrors `ml-explore/mlx-lm` `main`
 | `topic/batch-kv-cache-fast-mask` | skip the attention mask in batch caches with no padding | ml-explore/mlx-lm#1970, closed (withdrawn 2026-10-16); eejd/py-mlx-lm#2 | `fix/batch-kv-cache-fast-mask` |
 | `topic/llama3-tool-parser` | tool parser for Llama 3.1+ JSON calls (`<\|python_tag\|>{...}` and bare JSON); `ToolCallFormatter` can return a parser's non-call text as content | not submitted: upstream candidate only, after the quantbench + agentbench soak (eejd/py-mlx-lm#5) | - |
 | `topic/server-ignore-eos` | `ignore_eos` request option on `/v1/completions` and `/v1/chat/completions` (EOS tokens do not end the request; `max_tokens` and `stop` still do; default off), for fixed-output load tests | not submitted (eejd/py-mlx-lm#12) | - |
+| `topic/harmony-upstream-2049` | parse gpt-oss Harmony channels and tool calls | upstream backport: ml-explore/mlx-lm#2049 (`bca6709a67`); eejd/py-mlx-lm#4, #6 | - |
 
-Not on `local` (not carried by any port): `fix/gpt-oss-harmony-channel-parsing`
-(ml-explore/mlx-lm#1867, open; eejd/py-mlx-lm#4). Its branch is still the upstream PR's head.
+The old `fix/gpt-oss-harmony-channel-parsing` branch (ml-explore/mlx-lm#1867)
+is superseded by the #2049 backport and is not carried.
 
 The `fix/*` branches are the heads of the upstream PRs above and are left untouched; the
 `topic/*` branches are their content rebased onto `main` (v0.32.2).
