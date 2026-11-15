@@ -26,10 +26,17 @@ from mlx_lm.server import (
     SamplingArguments,
     ToolCallFormatter,
     _apply_stop_words,
+    _run_http_server,
     _make_sampler,
 )
 from mlx_lm.tool_parsers import json_tools, llama3, mistral, pythonic, qwen3_coder
 from mlx_lm.utils import load
+
+
+class TestHTTPServerBacklog(unittest.TestCase):
+    def test_default_server_backlog(self):
+        server_class = _run_http_server.__defaults__[0]
+        self.assertEqual(server_class.request_queue_size, 128)
 
 
 class DummyModelProvider:
