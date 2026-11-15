@@ -1765,7 +1765,13 @@ class LRUPromptCache:
         result = self._trie.search(model, tokens)
         if result.exact is not None:
             cache_entry = self._trie.get(result.model, result.exact)
-            return copy.deepcopy(cache_entry.prompt_cache), []
+            if not tokens:
+                return copy.deepcopy(cache_entry.prompt_cache), []
+            if can_trim_prompt_cache(cache_entry.prompt_cache):
+                cache = copy.deepcopy(cache_entry.prompt_cache)
+                trim_prompt_cache(cache, 1)
+                return cache, tokens[-1:]
+            return None, tokens
 
         short_length = len(result.shorter) if result.shorter is not None else 0
         if result.longer is not None and result.common_prefix > short_length:

@@ -4,9 +4,6 @@ import contextlib
 import http
 import io
 import json
-import socket
-import subprocess
-import sys
 import threading
 import time
 import unittest
@@ -115,38 +112,6 @@ class MockCache:
     def trim(self, n):
         assert self._is_trimmable
         return n
-
-
-class TestCachedPromptCrash(unittest.TestCase):
-    def test_exact_cached_prompt_returns_400_and_keeps_serving(self):
-        with socket.socket() as sock:
-            sock.bind(("127.0.0.1", 0))
-            port = sock.getsockname()[1]
-        server = subprocess.Popen(
-            [sys.executable, "-m", "mlx_lm.server", "--model",
-             "mlx-community/Llama-3.2-1B-Instruct-4bit", "--port", str(port)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        url = f"http://127.0.0.1:{port}/v1/completions"
-        try:
-            for _ in range(100):
-                try:
-                    requests.get(f"http://127.0.0.1:{port}/v1/models", timeout=1)
-                    break
-                except requests.ConnectionError:
-                    time.sleep(0.1)
-            else:
-                self.fail("server did not start")
-            first = requests.post(url, json={"prompt": "Hi", "max_tokens": 2, "temperature": 0}, timeout=30)
-            self.assertEqual(first.status_code, 200)
-            self.assertEqual(first.json()["choices"][0]["text"].strip(), "everyone!")
-            second = requests.post(url, json={"prompt": "Hi everyone!", "max_tokens": 1}, timeout=5)
-            self.assertEqual(second.status_code, 400)
-            later = requests.post(url, json={"prompt": "Hello", "max_tokens": 1}, timeout=5)
-            self.assertEqual(later.status_code, 200)
-        finally:
-            server.terminate()
-            server.wait(timeout=10)
 
 
 class TestBareToolCallFilter(unittest.TestCase):
@@ -1282,6 +1247,26 @@ class TestKeepalive(unittest.TestCase):
 
 
 class TestLRUPromptCache(unittest.TestCase):
+    def test_exact_hit_refeeds_last_token_without_mutating_cache(self):
+        cache = LRUPromptCache()
+        model, tokens = ("test", None, None), [10, 11, 12]
+        stored = KVCache()
+        values = mx.arange(3).reshape(1, 1, 3, 1)
+        stored.update_and_fetch(values, values)
+        cache.insert_cache(model, tokens, [stored])
+        fetched, rest = cache.fetch_nearest_cache(model, tokens)
+        self.assertEqual(rest, [12])
+        self.assertEqual(fetched[0].offset, 2)
+        self.assertEqual(stored.offset, 3)
+
+    def test_untrimmable_exact_hit_recomputes(self):
+        cache = LRUPromptCache()
+        model, tokens = ("test", None, None), [1, 2]
+        cache.insert_cache(model, tokens, [MockCache("test", is_trimmable=False)])
+        fetched, rest = cache.fetch_nearest_cache(model, tokens)
+        self.assertIsNone(fetched)
+        self.assertEqual(rest, tokens)
+
     def test_caching(self):
         cache = LRUPromptCache(max_size=10)
 
@@ -1340,7 +1325,7 @@ class TestLRUPromptCache(unittest.TestCase):
 
         c, t = cache.fetch_nearest_cache(model, [1, 2])
         self.assertEqual(c, [MockCache("test1")])
-        self.assertEqual(t, [])
+        self.assertEqual(t, [2])
         c, t = cache.fetch_nearest_cache(model, [1])
         self.assertEqual(c, [MockCache("test1")])
         self.assertEqual(t, [1])
@@ -1363,10 +1348,10 @@ class TestLRUPromptCache(unittest.TestCase):
         self.assertEqual(t, [1, 2])
         c, t = cache.fetch_nearest_cache(model, [2, 3])
         self.assertEqual(c, [MockCache("test2")])
-        self.assertEqual(t, [])
+        self.assertEqual(t, [3])
         c, t = cache.fetch_nearest_cache(model, [3, 4])
         self.assertEqual(c, [MockCache("test3")])
-        self.assertEqual(t, [])
+        self.assertEqual(t, [4])
 
         cache.insert_cache(model, [4, 5], [MockCache("test4")], cache_type="user")
         c, t = cache.fetch_nearest_cache(model, [2, 3])
@@ -1374,10 +1359,10 @@ class TestLRUPromptCache(unittest.TestCase):
         self.assertEqual(t, [2, 3])
         c, t = cache.fetch_nearest_cache(model, [3, 4])
         self.assertEqual(c, [MockCache("test3")])
-        self.assertEqual(t, [])
+        self.assertEqual(t, [4])
         c, t = cache.fetch_nearest_cache(model, [4, 5])
         self.assertEqual(c, [MockCache("test4")])
-        self.assertEqual(t, [])
+        self.assertEqual(t, [5])
 
         cache.insert_cache(model, [5, 6], [MockCache("test5")])
         cache.insert_cache(model, [6, 7], [MockCache("test6")])
@@ -1386,10 +1371,10 @@ class TestLRUPromptCache(unittest.TestCase):
         self.assertEqual(t, [5, 6])
         c, t = cache.fetch_nearest_cache(model, [6, 7])
         self.assertEqual(c, [MockCache("test6")])
-        self.assertEqual(t, [])
+        self.assertEqual(t, [7])
         c, t = cache.fetch_nearest_cache(model, [4, 5])
         self.assertEqual(c, [MockCache("test4")])
-        self.assertEqual(t, [])
+        self.assertEqual(t, [5])
 
     def test_insert_trimmable_cache_removes_immediate_prefix(self):
         cache = LRUPromptCache(max_size=10)

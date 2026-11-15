@@ -1072,9 +1072,6 @@ class ResponseGenerator:
                     cache, rest = self.prompt_cache.fetch_nearest_cache(
                         current_model_key, prompt
                     )
-                    if not rest:
-                        rqueue.put(ValueError("Prompt has no uncached tokens."))
-                        continue
                     prompt_cache_count = len(prompt) - len(rest)
                     N = prompt_cache_count
                     while N > 0:
@@ -1843,11 +1840,6 @@ class APIHandler(BaseHTTPRequestHandler):
                 args,
                 progress_callback=keepalive_callback,
             )
-        except ValueError as e:
-            self._set_completion_headers(400)
-            self.end_headers()
-            self.wfile.write(json.dumps({"error": str(e)}).encode())
-            return
         except Exception as e:
             self._set_completion_headers(404)
             self.end_headers()
