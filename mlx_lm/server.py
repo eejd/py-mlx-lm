@@ -999,7 +999,6 @@ class ResponseGenerator:
 
         return prompt, segments, segment_types, initial_state, None
 
-
     def _is_batchable(self, args):
         return (
             self.model_provider.is_batchable

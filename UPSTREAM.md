@@ -31,8 +31,29 @@ tests. Mistral vocabulary detection and the batch KV-cache fast-mask path remain
 carried unchanged.
 
 The setuptools-scm `git describe` command excludes the fork's `-local*` tags:
-their names are not PEP 440 versions and upstream's new version machinery cannot
-parse them. Version discovery still uses the upstream version tags.
+`git describe` finds the fork's own newest tag first, and names such as
+`v0.32.2-local05` are not PEP 440 versions. This was already so at `local05`
+(setuptools-scm and the dynamic version were in its `pyproject.toml`); only git
+checkouts are affected, since the MacPorts port builds from the GitHub archive
+and sets `SETUPTOOLS_SCM_PRETEND_VERSION`.
+
+Behaviour deliberately kept from the fork: when a response ends with finish
+reason `stop` and the tool formatter saw a call (`ToolCallFormatter.made_call`,
+topic `llama3-tool-parser`), the finish reason becomes `tool_calls`, even if
+that call was dropped as unparseable. Upstream's ab7f704 changed this to
+`tool_formatter.count` (only calls that parse count), so a response whose only
+call fails to parse ends with `stop` upstream and `tool_calls` here. The fork's
+tests (`test_a_call_cut_short_is_dropped`) pin the fork behaviour; whether to
+adopt upstream's is an open owner decision.
+
+Packaging note: upstream now requires `pillow` (dc2012b) and `mlx>=0.32.3`
+(e7d21f4). The MacPorts port `py-mlx-lm-local` needs `pillow` in `depends_lib`.
+
+Test status of this merge (offline, mlx 0.32.4+local03, cached models): the full
+suite fails the same 23 tests and errors on the same collection error as pristine
+upstream `4cfc647` (numerical assertions in test_generate/test_models, uncached
+models); the merged tree passes 451 tests against upstream's 357, the difference
+being the carried topics' tests.
 
 ## Tags
 
