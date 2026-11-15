@@ -757,7 +757,7 @@ class TestToolCallFormatter(unittest.TestCase):
             {"items": [{"name": "noodles", "organic": True}]},
         )
         self.assertEqual(content, "")
-        self.assertTrue(formatter.made_call)
+        self.assertEqual(formatter.count, 2)
 
     def test_text_that_is_not_a_call_is_returned_as_content(self):
         tools = [{"type": "function", "function": {"name": "get_time"}}]
@@ -766,19 +766,20 @@ class TestToolCallFormatter(unittest.TestCase):
         tool_calls, content = formatter(["print(1)"])
 
         self.assertEqual((tool_calls, content), ([], "print(1)"))
-        self.assertFalse(formatter.made_call)
+        self.assertEqual(formatter.count, 0)
 
         tool_calls, content = formatter(['{"name": "get_time", "parameters": {}}', "x = 1"])
 
         self.assertEqual([tc["function"]["name"] for tc in tool_calls], ["get_time"])
         self.assertEqual(content, "x = 1")
-        self.assertTrue(formatter.made_call)
+        self.assertEqual(formatter.count, 1)
 
     def test_a_call_cut_short_is_dropped(self):
         formatter = ToolCallFormatter(qwen3_coder.parse_tool_call, tools=None)
 
         self.assertEqual(formatter(["<function=a>\n<parameter=b>"]), ([], ""))
-        self.assertTrue(formatter.made_call)
+        # A dropped call is not a call: it does not count towards `tool_calls`.
+        self.assertEqual(formatter.count, 0)
 
     def test_drops_broken_tool_calls(self):
         formatter = ToolCallFormatter(json_tools.parse_tool_call, None, True)
@@ -1835,6 +1836,33 @@ class TestIgnoreEos(unittest.TestCase):
             ("length", None, ["get_weather"]),
         )
 
+    def test_a_call_that_fails_to_parse_does_not_make_a_tool_call_finish(self):
+        # A dropped call is not a call: the client gets `stop` and nothing to run,
+        # not `tool_calls` next to an empty list.
+        encode = self.response_generator.model_provider.tokenizer.encode
+        broken = encode("<tool_call>\n{oops}\n</tool_call>", add_special_tokens=False)
+        with self.assertLogs(level="WARNING"):
+            finish, _, calls = self.tool_request(json_tools, [*broken, self.eos])
+        self.assertEqual((finish, calls), ("stop", []))
+
+    def test_a_call_cut_by_max_tokens_stays_length(self):
+        encode = self.response_generator.model_provider.tokenizer.encode
+        call = encode(
+            '<tool_call>\n{"name": "get_weather", "arguments": {"city": "Tokyo"}}'
+            "\n</tool_call>",
+            add_special_tokens=False,
+        )
+        # Complete: tool_calls. Cut before the end marker: the truncated call is not
+        # a call and the cut is reported as `length`.
+        self.assertEqual(
+            self.tool_request(json_tools, [*call, self.eos]),
+            ("tool_calls", None, ["get_weather"]),
+        )
+        finish, _, calls = self.tool_request(
+            json_tools, call, max_tokens=len(call) - 3
+        )
+        self.assertEqual((finish, calls), ("length", []))
+
     def test_text_after_an_ignored_eos_joins_a_call_without_an_end_marker(self):
         encode = self.response_generator.model_provider.tokenizer.encode
         call = encode(
@@ -1918,6 +1946,8 @@ class TestIgnoreEosWithDraftModel(TestIgnoreEos):
     test_text_after_an_ignored_eos_joins_a_call_without_an_end_marker = None
     test_a_call_with_an_end_marker_is_kept_when_text_follows_an_ignored_eos = None
     test_mistral_calls_with_text_after_an_ignored_eos = None
+    test_a_call_that_fails_to_parse_does_not_make_a_tool_call_finish = None
+    test_a_call_cut_by_max_tokens_stays_length = None
 
     def send(self, *args, seed=None, **kwargs):
         return super().send(*args, seed=7 if seed is None else seed, **kwargs)

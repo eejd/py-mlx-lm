@@ -37,14 +37,17 @@ The setuptools-scm `git describe` command excludes the fork's `-local*` tags:
 checkouts are affected, since the MacPorts port builds from the GitHub archive
 and sets `SETUPTOOLS_SCM_PRETEND_VERSION`.
 
-Behaviour deliberately kept from the fork: when a response ends with finish
-reason `stop` and the tool formatter saw a call (`ToolCallFormatter.made_call`,
-topic `llama3-tool-parser`), the finish reason becomes `tool_calls`, even if
-that call was dropped as unparseable. Upstream's ab7f704 changed this to
-`tool_formatter.count` (only calls that parse count), so a response whose only
-call fails to parse ends with `stop` upstream and `tool_calls` here. The fork's
-tests (`test_a_call_cut_short_is_dropped`) pin the fork behaviour; whether to
-adopt upstream's is an open owner decision.
+Finish reason with tool calls (`v0.32.2-local07`): a response that ends with
+`stop` becomes `tool_calls` only when at least one call parsed
+(`ToolCallFormatter.count`, upstream's rule since ab7f704; the fork's earlier
+`made_call` rule, which also counted a call that was dropped as unparseable, is
+gone). A dropped call is not a call: the client gets `stop` and no tool calls
+instead of `tool_calls` next to an empty list. A response cut by `max_tokens`
+keeps `length`. This matches vLLM's `resolve_finish_reason`. mlx-lm's server has
+no `tool_choice` handling, so OpenAI's forced-named-tool case (`stop`) does not
+arise. Tests: `ToolCallFormatter` counts, and handler-level
+`test_a_call_that_fails_to_parse_does_not_make_a_tool_call_finish` and
+`test_a_call_cut_by_max_tokens_stays_length`.
 
 Packaging note: upstream now requires `pillow` (dc2012b) and `mlx>=0.32.3`
 (e7d21f4). The MacPorts port `py-mlx-lm-local` needs `pillow` in `depends_lib`.
@@ -58,4 +61,4 @@ being the carried topics' tests.
 ## Tags
 
 
-`v0.32.2-local01` (superseded: its qwen3-coder port raised `UnboundLocalError` for any request with tools to a bare-call parser); `v0.32.2-local02` and `v0.32.2-local03` (tests only over local02; the flush now runs per segment, with handler-level tests; local03 is superseded by local04); `v0.32.2-local04` (local03 + `topic/llama3-tool-parser`; superseded by local05; **behaviour change for callers of `mlx_lm.server.ToolCallFormatter`:** it returns `(tool_calls, content)` instead of a list); `v0.32.2-local05` (local04 + `topic/server-ignore-eos`; new `ignore_eos` request option, default off); `v0.32.2-local06` (not yet cut: merge of upstream 4cfc647).
+`v0.32.2-local01` (superseded: its qwen3-coder port raised `UnboundLocalError` for any request with tools to a bare-call parser); `v0.32.2-local02` and `v0.32.2-local03` (tests only over local02; the flush now runs per segment, with handler-level tests; local03 is superseded by local04); `v0.32.2-local04` (local03 + `topic/llama3-tool-parser`; superseded by local05; **behaviour change for callers of `mlx_lm.server.ToolCallFormatter`:** it returns `(tool_calls, content)` instead of a list); `v0.32.2-local05` (local04 + `topic/server-ignore-eos`; new `ignore_eos` request option, default off); `v0.32.2-local06` (merge of upstream 4cfc647; superseded by local07); `v0.32.2-local07` (not yet cut: local06 + `ToolCallFormatter.count` finish-reason rule, `made_call` removed).
