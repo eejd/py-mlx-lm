@@ -2146,11 +2146,18 @@ class APIHandler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
 
+REQUEST_QUEUE_SIZE = 128
+
+
+class Server(ThreadingHTTPServer):
+    request_queue_size = REQUEST_QUEUE_SIZE
+
+
 def _run_http_server(
     host: str,
     port: int,
     response_generator,
-    server_class=ThreadingHTTPServer,
+    server_class=Server,
     handler_class=APIHandler,
 ):
     server_address = (host, port)
@@ -2183,14 +2190,14 @@ def run(
     host: str,
     port: int,
     model_provider: ModelProvider,
-    server_class=ThreadingHTTPServer,
+    server_class=Server,
     handler_class=APIHandler,
 ):
     group = mx.distributed.init()
     prompt_cache = LRUPromptCache(model_provider.cli_args.prompt_cache_size)
     response_generator = ResponseGenerator(model_provider, prompt_cache)
     if group.rank() == 0:
-        _run_http_server(host, port, response_generator)
+        _run_http_server(host, port, response_generator, server_class, handler_class)
     else:
         response_generator.join()
 
