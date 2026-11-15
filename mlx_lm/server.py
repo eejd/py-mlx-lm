@@ -8,8 +8,8 @@ import io
 import json
 import logging
 import pickle
-import re
 import platform
+import re
 import socket
 import sys
 import time
@@ -214,7 +214,9 @@ class BareToolCallFilter:
     def _close_parameters(self, call):
         """Insert the ``</parameter>`` a model left out before the next parameter or the end."""
         out, depth_open = [], False
-        for piece in re.split(r"(<parameter=|</parameter>|" + re.escape(self._end) + ")", call):
+        for piece in re.split(
+            r"(<parameter=|</parameter>|" + re.escape(self._end) + ")", call
+        ):
             if piece == "<parameter=":
                 if depth_open:
                     out.append("</parameter>\n")
@@ -259,7 +261,9 @@ class BareToolCallFilter:
                     break
                 pos = j + len(self._end)
                 after = text[pos:].lstrip()
-                starts = (self._trailer, self._start) if self._trailer else (self._start,)
+                starts = (
+                    (self._trailer, self._start) if self._trailer else (self._start,)
+                )
                 if not after or after.startswith(starts):
                     cut = pos
                     break
@@ -284,6 +288,8 @@ class BareToolCallFilter:
         if not m or (self._names is not None and m.group(1) not in self._names):
             return False
         return self._end in text
+
+
 def _apply_stop_words(
     reader: TextStateMachine.Reader, text: str, *, finish_reason: str | None
 ) -> tuple[str, str | None]:
@@ -1101,7 +1107,9 @@ class ResponseGenerator:
                         samplers=[_make_sampler(args, current_tokenizer)],
                         logits_processors=[_make_logits_processors(args)],
                         stop_sequences=[
-                            make_stop_sequences(current_tokenizer, ignore_eos=args.ignore_eos)
+                            make_stop_sequences(
+                                current_tokenizer, ignore_eos=args.ignore_eos
+                            )
                         ],
                     )
                     batch_results[uid] = {

@@ -7,11 +7,11 @@ from tokenizers.models import WordLevel
 from transformers import PreTrainedTokenizerFast
 
 from mlx_lm.tokenizer_utils import (
-    _infer_tool_parser,
     BPEStreamingDetokenizer,
     NaiveStreamingDetokenizer,
     SPMStreamingDetokenizer,
     TokenizerWrapper,
+    _infer_tool_parser,
 )
 from mlx_lm.tool_parsers import llama3, pythonic
 from mlx_lm.utils import load_tokenizer
@@ -187,12 +187,18 @@ class TestTokenizers(unittest.TestCase):
                 _infer_tool_parser(FakeTokenizer(llama_vocab, "x " + marker)), "llama3"
             )
         # A Llama 3.0 vocab, or a template without tools (Llama 3.1 base), has no calls.
-        self.assertIsNone(_infer_tool_parser(FakeTokenizer({"hello": 1}, "Environment: ipython")))
-        self.assertIsNone(_infer_tool_parser(FakeTokenizer(llama_vocab, "{{ messages }}")))
+        self.assertIsNone(
+            _infer_tool_parser(FakeTokenizer({"hello": 1}, "Environment: ipython"))
+        )
+        self.assertIsNone(
+            _infer_tool_parser(FakeTokenizer(llama_vocab, "{{ messages }}"))
+        )
         self.assertIsNone(_infer_tool_parser(FakeTokenizer(llama_vocab)))
         # Hermes 3 on Llama 3.2 has the token too, but its template is a <tool_call> one.
         hermes = "<tool_call> tool_call.name Environment: ipython"
-        self.assertEqual(_infer_tool_parser(FakeTokenizer(llama_vocab, hermes)), "json_tools")
+        self.assertEqual(
+            _infer_tool_parser(FakeTokenizer(llama_vocab, hermes)), "json_tools"
+        )
         # No marker anywhere means no parser.
         self.assertIsNone(_infer_tool_parser(FakeTokenizer({"hello": 1})))
 
