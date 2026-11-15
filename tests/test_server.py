@@ -2,6 +2,7 @@
 
 import contextlib
 import http
+import inspect
 import io
 import json
 import threading
@@ -16,6 +17,7 @@ import requests
 
 from mlx_lm.generate import TextStateMachine
 from mlx_lm.models.cache import KVCache, QuantizedKVCache
+import mlx_lm.server as server
 from mlx_lm.server import (
     APIHandler,
     BareToolCallFilter,
@@ -35,8 +37,21 @@ from mlx_lm.utils import load
 
 class TestHTTPServerBacklog(unittest.TestCase):
     def test_default_server_backlog(self):
-        server_class = _run_http_server.__defaults__[0]
-        self.assertEqual(server_class.request_queue_size, 128)
+        self.assertEqual(server.Server.request_queue_size, 128)
+        default = inspect.signature(_run_http_server).parameters["server_class"].default
+        self.assertIs(default, server.Server)
+
+    def test_run_passes_server_and_handler_classes(self):
+        provider = SimpleNamespace(cli_args=SimpleNamespace(prompt_cache_size=1))
+        server_class, handler_class = object(), object()
+        generator = object()
+        with (
+            mock.patch.object(server.mx.distributed, "init", return_value=SimpleNamespace(rank=lambda: 0)),
+            mock.patch.object(server, "ResponseGenerator", return_value=generator),
+            mock.patch.object(server, "_run_http_server") as run_http,
+        ):
+            server.run("localhost", 1234, provider, server_class, handler_class)
+        run_http.assert_called_once_with("localhost", 1234, generator, server_class, handler_class)
 
 
 class DummyModelProvider:
