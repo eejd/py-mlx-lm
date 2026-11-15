@@ -302,12 +302,12 @@ class ToolCallFormatter:
 
     Calling it returns ``(tool_calls, content)``. ``content`` is the text of a call that its
     parser (see ``NotAToolCall``) says is not a call, to be returned as message text. A call
-    that fails to parse any other way is dropped. ``made_call`` tells whether any of the
-    texts so far was a call, parsed or not.
+    that fails to parse any other way is dropped. ``count`` is the number of calls that
+    parsed so far; only those are tool calls, so it alone decides the ``tool_calls`` finish
+    reason (a dropped call is not a call).
     """
 
     def __init__(self, tool_parser, tools, streaming=False):
-        self.made_call = False
         self.count = 0
         self._tool_parser = tool_parser
         self._tools = tools
@@ -336,13 +336,11 @@ class ToolCallFormatter:
                 content += e.content
                 continue
             except Exception as e:
-                self.made_call = True
                 logging.warning(
                     f"Failed to parse tool call ({type(e).__name__}: {e}) — "
                     f"tool text was likely truncated mid-generation."
                 )
                 continue
-            self.made_call = True
             for out in formatted:
                 if self._streaming:
                     out["index"] = self.count
@@ -1945,7 +1943,7 @@ class APIHandler(BaseHTTPRequestHandler):
 
             tool_calls, not_calls = tool_formatter(pending.tool_calls)
             pending += TextStateMachine.Delta(content=not_calls)
-            if finish_reason == "stop" and tool_formatter.made_call:
+            if finish_reason == "stop" and tool_formatter.count:
                 finish_reason = "tool_calls"
 
             if self.stream:
