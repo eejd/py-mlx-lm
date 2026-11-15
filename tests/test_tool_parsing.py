@@ -929,7 +929,9 @@ class TestToolParsing(unittest.TestCase):
             '{"name": "get_weather", "parameters": {"city": "Paris"}}<|eot_id|>junk',
         ):
             with self.subTest(text=text):
-                self.assertEqual(llama3.parse_tool_call(text, self.LLAMA3_TOOLS), weather)
+                self.assertEqual(
+                    llama3.parse_tool_call(text, self.LLAMA3_TOOLS), weather
+                )
 
     def test_llama3_no_parameters(self):
         self.assertEqual(
@@ -964,7 +966,12 @@ class TestToolParsing(unittest.TestCase):
         self.assertEqual(call["arguments"], {"city": "A &amp; B &quot;x&quot;"})
 
     def test_llama3_marker_text_inside_a_value_is_kept(self):
-        for value in ("<|python_tag|>", "a <|python_tag|> b", "x<|eom_id|>y", "<|eot_id|>"):
+        for value in (
+            "<|python_tag|>",
+            "a <|python_tag|> b",
+            "x<|eom_id|>y",
+            "<|eot_id|>",
+        ):
             with self.subTest(value=value):
                 call = llama3.parse_tool_call(
                     json.dumps({"name": "get_weather", "parameters": {"city": value}}),
@@ -972,11 +979,15 @@ class TestToolParsing(unittest.TestCase):
                 )
                 self.assertEqual(call["arguments"], {"city": value})
         # and the marker between two calls still separates them
-        a = json.dumps({"name": "get_weather", "parameters": {"city": "<|python_tag|>"}})
+        a = json.dumps(
+            {"name": "get_weather", "parameters": {"city": "<|python_tag|>"}}
+        )
         calls = llama3.parse_tool_call(
             "<|python_tag|>" + a + "<|python_tag|>" + a, self.LLAMA3_TOOLS
         )
-        self.assertEqual([c["arguments"] for c in calls], [{"city": "<|python_tag|>"}] * 2)
+        self.assertEqual(
+            [c["arguments"] for c in calls], [{"city": "<|python_tag|>"}] * 2
+        )
 
     def test_llama3_nested_and_unicode_arguments(self):
         call = llama3.parse_tool_call(
@@ -991,7 +1002,10 @@ class TestToolParsing(unittest.TestCase):
         weather = '{"name": "get_weather", "parameters": {"city": "Paris"}}'
         cases = [
             # ipython mode: code behind the tag, and the built-in tools
-            ("import json\nprint(json.dumps({}))", "import json\nprint(json.dumps({}))"),
+            (
+                "import json\nprint(json.dumps({}))",
+                "import json\nprint(json.dumps({}))",
+            ),
             ('brave_search.call(query="x")', 'brave_search.call(query="x")'),
             # cut off
             (weather[:-5], weather[:-5]),
@@ -1021,7 +1035,9 @@ class TestToolParsing(unittest.TestCase):
     def test_llama3_without_declared_tools_nothing_is_a_call(self):
         for tools in (None, []):
             with self.assertRaises(NotAToolCall):
-                llama3.parse_tool_call('{"name": "get_weather", "parameters": {}}', tools)
+                llama3.parse_tool_call(
+                    '{"name": "get_weather", "parameters": {}}', tools
+                )
 
     def test_llama3_bare_call_filter(self):
         def run(chunks, tools=self.LLAMA3_TOOLS):
@@ -1049,7 +1065,10 @@ class TestToolParsing(unittest.TestCase):
         f = llama3.bare_tool_call_filter(self.LLAMA3_TOOLS)
         self.assertEqual(f.feed('{"name": "get_weather", '), ("", []))
         self.assertEqual(f.flush(), ('{"name": "get_weather", ', []))
-        self.assertEqual(run([call.replace("get_weather", "nope")]), (call.replace("get_weather", "nope"), []))
+        self.assertEqual(
+            run([call.replace("get_weather", "nope")]),
+            (call.replace("get_weather", "nope"), []),
+        )
         # the filter starts again after a flush
         f = llama3.bare_tool_call_filter(self.LLAMA3_TOOLS)
         f.feed("prose")
