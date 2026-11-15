@@ -4,6 +4,9 @@ import contextlib
 import http
 import io
 import json
+import socket
+import subprocess
+import sys
 import threading
 import time
 import unittest
@@ -112,6 +115,38 @@ class MockCache:
     def trim(self, n):
         assert self._is_trimmable
         return n
+
+
+class TestCachedPromptCrash(unittest.TestCase):
+    def test_exact_cached_prompt_returns_400_and_keeps_serving(self):
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        server = subprocess.Popen(
+            [sys.executable, "-m", "mlx_lm.server", "--model",
+             "mlx-community/Llama-3.2-1B-Instruct-4bit", "--port", str(port)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        url = f"http://127.0.0.1:{port}/v1/completions"
+        try:
+            for _ in range(100):
+                try:
+                    requests.get(f"http://127.0.0.1:{port}/v1/models", timeout=1)
+                    break
+                except requests.ConnectionError:
+                    time.sleep(0.1)
+            else:
+                self.fail("server did not start")
+            first = requests.post(url, json={"prompt": "Hi", "max_tokens": 2, "temperature": 0}, timeout=30)
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(first.json()["choices"][0]["text"].strip(), "everyone!")
+            second = requests.post(url, json={"prompt": "Hi everyone!", "max_tokens": 1}, timeout=5)
+            self.assertEqual(second.status_code, 400)
+            later = requests.post(url, json={"prompt": "Hello", "max_tokens": 1}, timeout=5)
+            self.assertEqual(later.status_code, 200)
+        finally:
+            server.terminate()
+            server.wait(timeout=10)
 
 
 class TestBareToolCallFilter(unittest.TestCase):
