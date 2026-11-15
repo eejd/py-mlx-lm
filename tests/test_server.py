@@ -1794,18 +1794,14 @@ class TestIgnoreEos(unittest.TestCase):
     def tool_parser(self, module):
         """The server's tokenizer with the tool parser of `module`."""
         tokenizer = self.response_generator.model_provider.tokenizer
-        cache = self.response_generator._state_machine_cache
+        # The state machine is built from the tokenizer per request, so the
+        # patched parser is picked up without any cache to clear.
         with (
             mock.patch.object(tokenizer, "_tool_parser", module.parse_tool_call),
             mock.patch.object(tokenizer, "_tool_call_start", module.tool_call_start),
             mock.patch.object(tokenizer, "_tool_call_end", module.tool_call_end),
         ):
-            # The cached state machines belong to the tokenizer without it.
-            cache.clear()
-            try:
-                yield tokenizer
-            finally:
-                cache.clear()
+            yield tokenizer
 
     def tool_request(self, module, sequence, **extra):
         """(finish_reason, content, tool call names) of a chat request with tools."""
