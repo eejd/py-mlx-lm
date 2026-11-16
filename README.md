@@ -220,6 +220,9 @@ read, at some cost to prompt processing speed. To change it pass
 For Phi-4-mini tool calls, supply a tool-aware `--chat-template` containing
 `functools[`: the server infers its JSON tool-call parser from that marker.
 The checkpoint's stock template does not describe tools.
+The server warns when a loaded model's chat template renders a probe identically
+with and without tools. In that case, use `--chat-template` with a tool-aware
+template if requests need tool definitions.
 
 Caching prompts can substantially speedup reusing the same long context with
 different queries. To cache a prompt use `mlx_lm.cache_prompt`. For example:
