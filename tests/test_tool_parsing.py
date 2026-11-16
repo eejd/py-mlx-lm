@@ -1095,6 +1095,7 @@ class TestToolParsing(unittest.TestCase):
         f.flush()
         self.assertEqual(f.feed(call), ("", []))
         self.assertEqual(f.flush(), ("", [call]))
+
     def test_harmony_channels(self):
         # Channel-first (what gpt-oss emits) and recipient-first (what the
         # chat template writes back). The call text is what the state machine
