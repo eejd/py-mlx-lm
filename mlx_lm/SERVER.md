@@ -66,6 +66,10 @@ curl localhost:8080/v1/chat/completions \
 - `messages`: An array of message objects representing the conversation
   history. Each message object should have a role (e.g. user, assistant) and
   content (the message text).
+  With the JSON tool parser, string-valued generated arguments are decoded
+  as JSON objects before formatting the response. Invalid JSON or a string
+  decoding to a non-object is rejected as a malformed call.
+
 
 - `role_mapping`: (Optional) A dictionary to customize the role prefixes in
   the generated prompt. If not provided, the default mappings are used.
