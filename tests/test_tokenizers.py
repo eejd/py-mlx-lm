@@ -27,6 +27,19 @@ def make_tokenizer(tokens, chat_template=None):
 
 
 class TestTokenizers(unittest.TestCase):
+    def test_bpe_finalize_literal_space(self):
+        class Tokenizer:
+            def __len__(self):
+                return 2
+
+            def convert_ids_to_tokens(self, ids):
+                return ["hello", " "]
+
+        detokenizer = BPEStreamingDetokenizer(Tokenizer())
+        detokenizer.add_token(0)
+        detokenizer._unflushed = detokenizer.tokenmap[1]
+        detokenizer.finalize()
+        self.assertEqual(detokenizer.text, "hello ")
 
     def check_tokenizer(self, tokenizer):
         def check(tokens):

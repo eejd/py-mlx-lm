@@ -253,11 +253,7 @@ class BPEStreamingDetokenizer(StreamingDetokenizer):
             self._unflushed = ""
 
     def finalize(self):
-        byte_decoder = _byte_decoder()
-        current_text = bytearray(byte_decoder[c] for c in self._unflushed).decode(
-            "utf-8",
-            "replace",
-        )
+        current_text = self._decode_bytes(self._unflushed)
         self.text += self._maybe_trim_space(current_text)
         self._unflushed = ""
 

@@ -1220,20 +1220,25 @@ class ResponseGenerator:
                     for r in gen_responses:
                         result = batch_results[r.uid]
 
-                        # Don't decode the final stop token
-                        if r.finish_reason == "stop":
-                            result["detokenizer"].finalize()
-                            text = result["detokenizer"].last_segment
-                        elif r.finish_reason == "length":
-                            if r.token not in result["no_text_tokens"]:
+                        try:
+                            # Don't decode the final stop token
+                            if r.finish_reason == "stop":
+                                result["detokenizer"].finalize()
+                                text = result["detokenizer"].last_segment
+                            elif r.finish_reason == "length":
+                                if r.token not in result["no_text_tokens"]:
+                                    result["detokenizer"].add_token(r.token)
+                                result["detokenizer"].finalize()
+                                text = result["detokenizer"].last_segment
+                            elif r.token in result["no_text_tokens"]:
+                                text = ""
+                            else:
                                 result["detokenizer"].add_token(r.token)
-                            result["detokenizer"].finalize()
-                            text = result["detokenizer"].last_segment
-                        elif r.token in result["no_text_tokens"]:
-                            text = ""
-                        else:
-                            result["detokenizer"].add_token(r.token)
-                            text = result["detokenizer"].last_segment
+                                text = result["detokenizer"].last_segment
+                        except Exception as e:
+                            result["rqueue"].put(e)
+                            uids_to_remove.append(r.uid)
+                            continue
                         text, finish_reason = _apply_stop_words(
                             result["stop_reader"], text, finish_reason=r.finish_reason
                         )
@@ -1860,7 +1865,6 @@ class APIHandler(BaseHTTPRequestHandler):
             self.end_headers()
             logging.debug("Starting stream:")
         else:
-            self._set_completion_headers(200)
             logging.debug("Starting completion:")
 
         # Tool call formatter
@@ -1993,11 +1997,21 @@ class APIHandler(BaseHTTPRequestHandler):
                     response_debug = json.dumps(resp, indent="\t")
                     logging.debug(f"Outgoing Response: {response_debug}")
 
+                self._set_completion_headers(200)
                 response_json = json.dumps(resp).encode()
                 self.send_header("Content-Length", str(len(response_json)))
                 self.end_headers()
                 self.wfile.write(response_json)
                 self.wfile.flush()
+        except Exception as e:
+            error = json.dumps({"error": str(e)})
+            if self.stream:
+                self.wfile.write(f"data: {error}\n\n".encode())
+            else:
+                self._set_completion_headers(500)
+                self.end_headers()
+                self.wfile.write(error.encode())
+            self.wfile.flush()
         finally:
             ctx.stop()
 
