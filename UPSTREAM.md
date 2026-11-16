@@ -12,6 +12,7 @@ branches below, merged with `--no-ff`. `main` mirrors `ml-explore/mlx-lm` `main`
 | `topic/llama3-tool-parser` | tool parser for Llama 3.1+ JSON calls (`<\|python_tag\|>{...}` and bare JSON); `ToolCallFormatter` can return a parser's non-call text as content | not submitted: upstream candidate only, after the quantbench + agentbench soak (eejd/py-mlx-lm#5) | - |
 | `topic/server-ignore-eos` | `ignore_eos` request option on `/v1/completions` and `/v1/chat/completions` (EOS tokens do not end the request; `max_tokens` and `stop` still do; default off), for fixed-output load tests | not submitted (eejd/py-mlx-lm#12) | - |
 | `topic/bpe-detokenizer-finalize` | decode pending BPE bytes safely and isolate batched request detokenizer errors | not submitted (eejd/py-mlx-lm#24) | - |
+| `topic/server-load-errors-actionable` | return actionable model and tokenizer load errors without killing the generation thread | not submitted (eejd/py-mlx-lm#21, #22, #25) | - |
 
 Not on `local` (not carried by any port): `fix/gpt-oss-harmony-channel-parsing`
 (ml-explore/mlx-lm#1867, open; eejd/py-mlx-lm#4). Its branch is still the upstream PR's head.
