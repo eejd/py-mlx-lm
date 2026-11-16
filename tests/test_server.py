@@ -913,7 +913,8 @@ class TestServer(unittest.TestCase):
             second = requests.post(url, json=body, timeout=30)
         self.assertEqual(second.status_code, 200, second.text)
         self.assertTrue(self.response_generator.generation_available())
-    def test_load_error_returns_400_and_generation_survives(self):
+
+    def test_handle_load_error_returns_400_and_generation_survives(self):
         provider = self.response_generator.model_provider
         original_load = provider.load
         url = f"http://localhost:{self.port}/v1/completions"
