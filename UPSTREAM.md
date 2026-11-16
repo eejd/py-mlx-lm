@@ -13,9 +13,10 @@ branches below, merged with `--no-ff`. `main` mirrors `ml-explore/mlx-lm` `main`
 | `topic/server-ignore-eos` | `ignore_eos` request option on `/v1/completions` and `/v1/chat/completions` (EOS tokens do not end the request; `max_tokens` and `stop` still do; default off), for fixed-output load tests | not submitted (eejd/py-mlx-lm#12) | - |
 | `topic/bpe-detokenizer-finalize` | decode pending BPE bytes safely and isolate batched request detokenizer errors | not submitted (eejd/py-mlx-lm#24) | - |
 | `topic/server-load-errors-actionable` | return actionable model and tokenizer load errors without killing the generation thread | not submitted (eejd/py-mlx-lm#21, #22, #25) | - |
+| `topic/harmony-upstream-2049` | parse gpt-oss Harmony channels and tool calls | upstream backport: ml-explore/mlx-lm#2049 (`bca6709a67`); eejd/py-mlx-lm#4, #6 | - |
 
-Not on `local` (not carried by any port): `fix/gpt-oss-harmony-channel-parsing`
-(ml-explore/mlx-lm#1867, open; eejd/py-mlx-lm#4). Its branch is still the upstream PR's head.
+The old `fix/gpt-oss-harmony-channel-parsing` branch (ml-explore/mlx-lm#1867)
+is superseded by the #2049 backport and is not carried.
 
 The `fix/*` branches are the heads of the upstream PRs above and are left untouched; the
 `topic/*` branches are their content rebased onto `main` (v0.32.2).
