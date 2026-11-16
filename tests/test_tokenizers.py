@@ -46,6 +46,7 @@ class TestTokenizers(unittest.TestCase):
         detokenizer._unflushed = detokenizer.tokenmap[1]
         detokenizer.finalize()
         self.assertEqual(detokenizer.text, "hello ")
+
     def test_strict_model_config_retries_declared_fast_tokenizer(self):
         tokenizer = make_tokenizer(["hello"])._tokenizer
         error = StrictDataclassFieldValidationError(
