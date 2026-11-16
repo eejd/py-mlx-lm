@@ -692,6 +692,8 @@ def _infer_tool_parser(tokenizer):
             return "mistral"
         elif "<atem:function_calls>" in chat_template:
             return "muse_spark"
+        elif "functools[" in chat_template:
+            return "phi4_mini_json"
         elif "<tool_call>" in chat_template and "tool_call.name" in chat_template:
             return "json_tools"
 

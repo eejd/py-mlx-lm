@@ -217,6 +217,10 @@ read, at some cost to prompt processing speed. To change it pass
 `--prefill-step-size n`. The default is `2048`, and `mlx_lm.generate`,
 `mlx_lm.chat`, `mlx_lm.server` and `mlx_lm.benchmark` all accept it.
 
+For Phi-4-mini tool calls, supply a tool-aware `--chat-template` containing
+`functools[`: the server infers its JSON tool-call parser from that marker.
+The checkpoint's stock template does not describe tools.
+
 Caching prompts can substantially speedup reusing the same long context with
 different queries. To cache a prompt use `mlx_lm.cache_prompt`. For example:
 
