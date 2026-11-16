@@ -221,7 +221,18 @@ def _get_classes(config: dict):
     try:
         arch = importlib.import_module(f"mlx_lm.models.{model_type}")
     except ImportError as e:
-        msg = f"Model type {model_type} not supported."
+        try:
+            vlm_spec = importlib.util.find_spec(f"mlx_vlm.models.{model_type}")
+        except ModuleNotFoundError:
+            vlm_spec = None
+        if vlm_spec is not None:
+            msg = (
+                f"Model type {model_type} is not supported by mlx-lm text serving; "
+                "it is a vision-language architecture supported by mlx-vlm: serve it "
+                "with `mlx_vlm.server --model <path>`."
+            )
+        else:
+            msg = f"Model type {model_type} not supported."
         raise ValueError(msg) from e
 
     return arch.Model, arch.ModelArgs
@@ -446,15 +457,6 @@ def load_model(
     if model_config is not None:
         config.update(model_config)
 
-    weight_files = glob.glob(str(model_path / "model*.safetensors"))
-
-    if not weight_files and strict:
-        raise FileNotFoundError(f"No safetensors found in {model_path}")
-
-    weights = {}
-    for wf in weight_files:
-        weights.update(mx.load(wf))
-
     if (model_file := config.get("model_file")) is not None:
         if not trust_remote_code:
             raise ValueError(
@@ -472,6 +474,15 @@ def load_model(
         model_class, model_args_class = arch.Model, arch.ModelArgs
     else:
         model_class, model_args_class = get_model_classes(config=config)
+
+    weight_files = glob.glob(str(model_path / "model*.safetensors"))
+
+    if not weight_files and strict:
+        raise FileNotFoundError(f"No safetensors found in {model_path}")
+
+    weights = {}
+    for wf in weight_files:
+        weights.update(mx.load(wf))
 
     if "quantization_config" not in config:
         text_config = config.get("text_config", {})

@@ -1016,8 +1016,11 @@ class ResponseGenerator:
         # synchronization messages.
         generation_stream = mx.default_stream(mx.default_device())
 
-        # Load the default model if it is given
-        self.model_provider.load_default()
+        # A failed preload must not prevent later requests from loading a model.
+        try:
+            self.model_provider.load_default()
+        except Exception:
+            logging.exception("Default model preload failed")
 
         current_model = None
         current_tokenizer = None
@@ -1144,7 +1147,7 @@ class ResponseGenerator:
                             args.model.model, args.model.adapter, args.model.draft
                         )
                     except Exception as e:
-                        rqueue.put(e)
+                        rqueue.put(ValueError(str(e)))
                         continue
 
                     if not batchable:
@@ -1854,7 +1857,7 @@ class APIHandler(BaseHTTPRequestHandler):
                 progress_callback=keepalive_callback,
             )
         except Exception as e:
-            self._set_completion_headers(404)
+            self._set_completion_headers(400 if isinstance(e, ValueError) else 404)
             self.end_headers()
             self.wfile.write(json.dumps({"error": str(e)}).encode())
             return

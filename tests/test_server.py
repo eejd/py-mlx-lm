@@ -913,6 +913,21 @@ class TestServer(unittest.TestCase):
             second = requests.post(url, json=body, timeout=30)
         self.assertEqual(second.status_code, 200, second.text)
         self.assertTrue(self.response_generator.generation_available())
+    def test_load_error_returns_400_and_generation_survives(self):
+        provider = self.response_generator.model_provider
+        original_load = provider.load
+        url = f"http://localhost:{self.port}/v1/completions"
+        body = {"model": "chat_model", "prompt": "Hello", "max_tokens": 1}
+        with mock.patch.object(
+            provider, "load", side_effect=ValueError("invalid checkpoint field")
+        ):
+            first = requests.post(url, json=body, timeout=30)
+        self.assertEqual(first.status_code, 400, first.text)
+        self.assertIn("invalid checkpoint field", first.text)
+        self.assertTrue(self.response_generator.generation_available())
+        with mock.patch.object(provider, "load", side_effect=original_load):
+            second = requests.post(url, json=body, timeout=30)
+        self.assertEqual(second.status_code, 200, second.text)
 
     def test_max_tokens_zero_is_rejected(self):
         url = f"http://localhost:{self.port}/v1/completions"
