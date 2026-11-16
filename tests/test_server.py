@@ -1612,15 +1612,13 @@ class TestModelSwapClearsCache(unittest.TestCase):
         self.assertGreaterEqual(clear_cache.call_count, 2)
 
 
-class FailingModelProvider:
-    def load_default(self):
-        raise RuntimeError("simulated generate crash")
-
-
 class TestGenerationThreadDeath(unittest.TestCase):
     def _crashed_generator(self):
-        rg = ResponseGenerator(FailingModelProvider(), LRUPromptCache())
-        rg.join()
+        with mock.patch.object(
+            ResponseGenerator, "_generate", side_effect=RuntimeError("simulated crash")
+        ):
+            rg = ResponseGenerator(mock.Mock(), LRUPromptCache())
+            rg.join()
         time.sleep(0.05)
         return rg
 
