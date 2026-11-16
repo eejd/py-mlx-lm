@@ -194,6 +194,10 @@ Models can also be converted and quantized directly in the
 [mlx-my-repo](https://huggingface.co/spaces/mlx-community/mlx-my-repo) Hugging
 Face Space.
 
+For models whose tool-call format is not inferred from their chat template,
+use `mlx_lm.server --tool-call-parser NAME` to select a parser explicitly.
+Available parser names are listed in `mlx_lm.server --help`.
+
 ### Long Prompts and Generations 
 
 `mlx-lm` has some tools to scale efficiently to long prompts and generations:
