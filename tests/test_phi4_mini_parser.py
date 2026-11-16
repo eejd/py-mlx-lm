@@ -27,6 +27,21 @@ def test_single_and_parallel_calls():
     ) == [{"name": "weather", "arguments": {}}, {"name": "time", "arguments": {}}]
 
 
+def test_json_string_arguments():
+    parse = parser()
+    assert parse(
+        '{"name":"weather","arguments":"{\\"city\\":\\"Paris\\"}"}]', TOOLS
+    ) == {
+        "name": "weather",
+        "arguments": {"city": "Paris"},
+    }
+    for value in ('"not-json"', '"[]"'):
+        import pytest
+
+        with pytest.raises(ValueError):
+            parse('{"name":"weather","arguments":' + value + "}]", TOOLS)
+
+
 def test_formatter_returns_undeclared_name_as_content():
     text = '{"name":"other","arguments":{}}]'
     assert ToolCallFormatter(parser(), TOOLS)([text]) == ([], text)

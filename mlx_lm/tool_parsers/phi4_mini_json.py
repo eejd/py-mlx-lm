@@ -25,6 +25,8 @@ def parse_tool_call(text: str, tools: Any | None = None):
         if not isinstance(call, dict) or not isinstance(call.get("name"), str):
             raise ValueError("Invalid tool call")
         arguments = call.get("arguments", call.get("parameters", {}))
+        if isinstance(arguments, str):
+            arguments = json.loads(arguments)
         if not isinstance(arguments, dict):
             raise ValueError("Invalid tool call arguments")
         if call["name"] not in names:
