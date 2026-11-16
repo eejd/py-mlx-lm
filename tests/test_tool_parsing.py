@@ -23,6 +23,18 @@ from mlx_lm.tool_parsers import (
 
 
 class TestToolParsing(unittest.TestCase):
+    def test_json_tools_string_arguments(self):
+        call = {"name": "weather", "arguments": json.dumps({"city": "Bogota"})}
+        self.assertEqual(
+            json_tools.parse_tool_call(json.dumps(call))["arguments"], {"city": "Bogota"}
+        )
+        self.assertEqual(
+            json_tools.parse_tool_call(json.dumps([call]))[0]["arguments"],
+            {"city": "Bogota"},
+        )
+        with self.assertRaises(ValueError):
+            json_tools.parse_tool_call(json.dumps({"name": "weather", "arguments": "[]"}))
+
     def test_parsers(self):
         test_cases = [
             ("call:multiply{a:12234585,b:48838483920}", function_gemma),
