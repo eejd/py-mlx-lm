@@ -8,6 +8,7 @@ import io
 import json
 import logging
 import pickle
+import pkgutil
 import platform
 import re
 import socket
@@ -38,6 +39,7 @@ import mlx.core as mx
 import numpy as np
 from huggingface_hub import scan_cache_dir
 
+from . import tool_parsers
 from ._version import __version__
 from .generate import (
     DEFAULT_QUANTIZED_KV_START,
@@ -653,6 +655,8 @@ class ModelProvider:
         self._tokenizer_config = {"trust_remote_code": cli_args.trust_remote_code}
         if cli_args.chat_template:
             self._tokenizer_config["chat_template"] = cli_args.chat_template
+        if getattr(cli_args, "tool_call_parser", None):
+            self._tokenizer_config["tool_parser_type"] = cli_args.tool_call_parser
 
     def reset(self) -> None:
         self.model_key = None
@@ -2270,6 +2274,13 @@ def main():
         default="",
         help="Specify a chat template for the tokenizer",
         required=False,
+    )
+    parser.add_argument(
+        "--tool-call-parser",
+        choices=sorted(
+            module.name for module in pkgutil.iter_modules(tool_parsers.__path__)
+        ),
+        help="Override the inferred tool-call parser",
     )
     parser.add_argument(
         "--use-default-chat-template",
