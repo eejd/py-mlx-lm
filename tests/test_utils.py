@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -28,6 +29,13 @@ class TestUtils(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.test_dir_fid.cleanup()
+
+    def test_vision_architecture_error_suggests_vlm_server(self):
+        with mock.patch.object(
+            utils.importlib.util, "find_spec", return_value=object()
+        ):
+            with self.assertRaisesRegex(ValueError, "mlx_vlm.server"):
+                utils._get_classes({"model_type": "aya_vision"})
 
     def test_load(self):
         from mlx_lm.models.qwen2 import Model as Qwen2Model

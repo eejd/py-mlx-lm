@@ -914,6 +914,27 @@ class TestServer(unittest.TestCase):
         self.assertEqual(second.status_code, 200, second.text)
         self.assertTrue(self.response_generator.generation_available())
 
+    def test_handle_load_error_returns_400_and_generation_survives(self):
+        provider = self.response_generator.model_provider
+        original_load = provider.load
+        url = f"http://localhost:{self.port}/v1/completions"
+        body = {
+            "model": "chat_model",
+            "adapters": "force-reload",
+            "prompt": "Hello",
+            "max_tokens": 1,
+        }
+        with mock.patch.object(
+            provider, "load", side_effect=ValueError("invalid checkpoint field")
+        ):
+            first = requests.post(url, json=body, timeout=30)
+        self.assertEqual(first.status_code, 400, first.text)
+        self.assertIn("invalid checkpoint field", first.text)
+        self.assertTrue(self.response_generator.generation_available())
+        with mock.patch.object(provider, "load", side_effect=original_load):
+            second = requests.post(url, json=body, timeout=30)
+        self.assertEqual(second.status_code, 200, second.text)
+
     def test_max_tokens_zero_is_rejected(self):
         url = f"http://localhost:{self.port}/v1/completions"
         response = requests.post(url, json={"prompt": "hi", "max_tokens": 0})
@@ -1591,15 +1612,13 @@ class TestModelSwapClearsCache(unittest.TestCase):
         self.assertGreaterEqual(clear_cache.call_count, 2)
 
 
-class FailingModelProvider:
-    def load_default(self):
-        raise RuntimeError("simulated generate crash")
-
-
 class TestGenerationThreadDeath(unittest.TestCase):
     def _crashed_generator(self):
-        rg = ResponseGenerator(FailingModelProvider(), LRUPromptCache())
-        rg.join()
+        with mock.patch.object(
+            ResponseGenerator, "_generate", side_effect=RuntimeError("simulated crash")
+        ):
+            rg = ResponseGenerator(mock.Mock(), LRUPromptCache())
+            rg.join()
         time.sleep(0.05)
         return rg
 

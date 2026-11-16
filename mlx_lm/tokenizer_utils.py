@@ -6,12 +6,18 @@ import functools
 import importlib
 import inspect
 import json
+import logging
 from functools import partial
 from json import JSONDecodeError
 from typing import Any, Dict, List, Optional, Tuple
 
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+
+try:
+    from huggingface_hub.errors import StrictDataclassFieldValidationError
+except ImportError:
+    StrictDataclassFieldValidationError = ()
 
 
 class StreamingDetokenizer(abc.ABC):
@@ -751,9 +757,30 @@ def load(
     chat_template = None
     response_format = None
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_path, **(tokenizer_config_extra or {})
-    )
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_path, **(tokenizer_config_extra or {})
+        )
+    except StrictDataclassFieldValidationError as e:
+        config_path = model_path / "tokenizer_config.json"
+        if not config_path.exists():
+            raise ValueError(
+                f"Invalid tokenizer configuration for {model_path}: {e}"
+            ) from e
+        with open(config_path, encoding="utf-8") as f:
+            config = json.load(f)
+        if not config.get("tokenizer_class"):
+            raise ValueError(
+                f"Invalid tokenizer configuration for {model_path}: {e}"
+            ) from e
+        tokenizer = PreTrainedTokenizerFast.from_pretrained(
+            model_path, **(tokenizer_config_extra or {})
+        )
+        logging.warning(
+            "tokenizer config validation failed (%s); loaded the tokenizer without "
+            "the model config",
+            e,
+        )
 
     tokenizer_config = tokenizer.init_kwargs
 

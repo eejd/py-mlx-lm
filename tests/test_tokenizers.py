@@ -1,11 +1,17 @@
 # Copyright © 2024 Apple Inc.
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
+from huggingface_hub.errors import StrictDataclassFieldValidationError
 from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
 from transformers import PreTrainedTokenizerFast
 
+import mlx_lm.tokenizer_utils as tokenizer_utils
 from mlx_lm.tokenizer_utils import (
     BPEStreamingDetokenizer,
     NaiveStreamingDetokenizer,
@@ -40,6 +46,32 @@ class TestTokenizers(unittest.TestCase):
         detokenizer._unflushed = detokenizer.tokenmap[1]
         detokenizer.finalize()
         self.assertEqual(detokenizer.text, "hello ")
+
+    def test_strict_model_config_retries_declared_fast_tokenizer(self):
+        tokenizer = make_tokenizer(["hello"])._tokenizer
+        error = StrictDataclassFieldValidationError(
+            field="initializer_range", cause=TypeError("expected float")
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / "tokenizer_config.json").write_text(
+                json.dumps({"tokenizer_class": "TokenizersBackend"}), encoding="utf-8"
+            )
+            with (
+                mock.patch.object(
+                    tokenizer_utils.AutoTokenizer, "from_pretrained", side_effect=error
+                ),
+                mock.patch.object(
+                    tokenizer_utils.PreTrainedTokenizerFast,
+                    "from_pretrained",
+                    return_value=tokenizer,
+                ) as fast,
+                self.assertLogs(level="WARNING") as logs,
+            ):
+                result = tokenizer_utils.load(path)
+            self.assertIs(result._tokenizer, tokenizer)
+            fast.assert_called_once_with(path)
+            self.assertIn("initializer_range", logs.output[0])
 
     def check_tokenizer(self, tokenizer):
         def check(tokens):
