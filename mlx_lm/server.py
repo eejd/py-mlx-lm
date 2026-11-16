@@ -631,6 +631,8 @@ class ModelProvider:
         self.processor = None
         self.draft_model = None
         self.is_batchable = False
+        self.template_ignores_tools = False
+        self._warned_template_keys = set()
 
         group = mx.distributed.init()
         self.pipeline_group = group if group.size() > 1 and cli_args.pipeline else None
@@ -661,6 +663,7 @@ class ModelProvider:
         self.processor = None
         self.draft_model = None
         self.is_batchable = False
+        self.template_ignores_tools = False
 
     def _load(self, model_path, adapter_path=None, draft_model_path=None):
         if self.is_distributed and (
@@ -724,6 +727,38 @@ class ModelProvider:
         self.processor = load_processor(model, config)
         self.draft_model = draft_model
         self.is_batchable = is_batchable
+
+        messages = [{"role": "user", "content": "Hello"}]
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "probe",
+                    "description": "Probe tool",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+        try:
+            without_tools = tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            with_tools = tokenizer.apply_chat_template(
+                messages, tools=tools, tokenize=False, add_generation_prompt=True
+            )
+            self.template_ignores_tools = without_tools == with_tools
+            if (
+                self.template_ignores_tools
+                and self.model_key not in self._warned_template_keys
+            ):
+                logging.warning(
+                    "the chat template of %s ignores `tools`; requests with tools are "
+                    "rendered without them (use --chat-template with a tool-aware template)",
+                    model_path,
+                )
+                self._warned_template_keys.add(self.model_key)
+        except Exception as e:
+            logging.debug("Could not probe chat template for %s: %s", model_path, e)
 
     def load_default(self):
         if self._model_map["default_model"] is not None:

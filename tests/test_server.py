@@ -1568,6 +1568,77 @@ class TestModelSwapClearsCache(unittest.TestCase):
         self.assertGreaterEqual(clear_cache.call_count, 2)
 
 
+class TestTemplateToolProbe(unittest.TestCase):
+    @mock.patch("mlx_lm.server.mx.clear_cache")
+    @mock.patch("mlx_lm.server.make_prompt_cache", return_value=[])
+    @mock.patch("mlx_lm.server.load_processor", return_value=None)
+    @mock.patch("mlx_lm.server.load")
+    @mock.patch("mlx_lm.server.mx.distributed.init")
+    def test_probe_and_warn_once_per_model_key(
+        self, init, load, load_processor, make_cache, clear_cache
+    ):
+        args = SimpleNamespace(
+            adapter_path=None,
+            chat_template=None,
+            draft_model=None,
+            model="ignored",
+            pipeline=False,
+            trust_remote_code=False,
+            use_default_chat_template=False,
+        )
+        init.return_value.size.return_value = 1
+        tokenizer = mock.Mock()
+        tokenizer.apply_chat_template.side_effect = lambda messages, **kwargs: (
+            "with tools"
+            if kwargs.get("tools") and load.current_model == "aware"
+            else "prompt"
+        )
+
+        def load_model(model, **kwargs):
+            load.current_model = model
+            return mock.Mock(), tokenizer, {}
+
+        load.side_effect = load_model
+        provider = server.ModelProvider(args)
+        with self.assertLogs(level="WARNING") as logs:
+            provider.load("ignored")
+            self.assertTrue(provider.template_ignores_tools)
+            provider.load("ignored")
+            provider.load("aware")
+            self.assertFalse(provider.template_ignores_tools)
+            provider.load("ignored")
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("chat template of ignored ignores `tools`", logs.output[0])
+
+    @mock.patch("mlx_lm.server.mx.clear_cache")
+    @mock.patch("mlx_lm.server.make_prompt_cache", return_value=[])
+    @mock.patch("mlx_lm.server.load_processor", return_value=None)
+    @mock.patch("mlx_lm.server.load")
+    @mock.patch("mlx_lm.server.mx.distributed.init")
+    def test_probe_exception_is_debug_only(
+        self, init, load, load_processor, make_cache, clear_cache
+    ):
+        args = SimpleNamespace(
+            adapter_path=None,
+            chat_template=None,
+            draft_model=None,
+            model="model",
+            pipeline=False,
+            trust_remote_code=False,
+            use_default_chat_template=False,
+        )
+        init.return_value.size.return_value = 1
+        tokenizer = mock.Mock()
+        tokenizer.apply_chat_template.side_effect = ValueError("no template")
+        load.return_value = (mock.Mock(), tokenizer, {})
+        provider = server.ModelProvider(args)
+        with self.assertLogs(level="DEBUG") as logs:
+            provider.load("model")
+        self.assertFalse(provider.template_ignores_tools)
+        self.assertTrue(any("no template" in line for line in logs.output))
+        self.assertFalse(any("WARNING" in line for line in logs.output))
+
+
 class FailingModelProvider:
     def load_default(self):
         raise RuntimeError("simulated generate crash")

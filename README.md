@@ -213,6 +213,10 @@ read, at some cost to prompt processing speed. To change it pass
 `--prefill-step-size n`. The default is `2048`, and `mlx_lm.generate`,
 `mlx_lm.chat`, `mlx_lm.server` and `mlx_lm.benchmark` all accept it.
 
+The server warns when a loaded model's chat template renders a probe identically
+with and without tools. In that case, use `--chat-template` with a tool-aware
+template if requests need tool definitions.
+
 Caching prompts can substantially speedup reusing the same long context with
 different queries. To cache a prompt use `mlx_lm.cache_prompt`. For example:
 
