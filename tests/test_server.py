@@ -917,7 +917,12 @@ class TestServer(unittest.TestCase):
         provider = self.response_generator.model_provider
         original_load = provider.load
         url = f"http://localhost:{self.port}/v1/completions"
-        body = {"model": "chat_model", "prompt": "Hello", "max_tokens": 1}
+        body = {
+            "model": "chat_model",
+            "adapters": "force-reload",
+            "prompt": "Hello",
+            "max_tokens": 1,
+        }
         with mock.patch.object(
             provider, "load", side_effect=ValueError("invalid checkpoint field")
         ):
