@@ -891,6 +891,29 @@ class TestServer(unittest.TestCase):
         cls.server_thread.join()
         cls.response_generator.stop_and_join()
 
+    def test_detokenizer_failure_does_not_kill_generation_thread(self):
+        tokenizer = self.response_generator.model_provider.tokenizer
+        detokenizer_class = type(tokenizer.detokenizer)
+        original_finalize = detokenizer_class.finalize
+        failed = False
+
+        def fail_once(detokenizer):
+            nonlocal failed
+            if not failed:
+                failed = True
+                raise ValueError("detokenizer failure")
+            return original_finalize(detokenizer)
+
+        url = f"http://localhost:{self.port}/v1/completions"
+        body = {"model": "default_model", "prompt": "Hello", "max_tokens": 1}
+        with mock.patch.object(detokenizer_class, "finalize", fail_once):
+            first = requests.post(url, json=body, timeout=30)
+            self.assertIn("detokenizer failure", first.text)
+            self.assertGreaterEqual(first.status_code, 400)
+            second = requests.post(url, json=body, timeout=30)
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertTrue(self.response_generator.generation_available())
+
     def test_max_tokens_zero_is_rejected(self):
         url = f"http://localhost:{self.port}/v1/completions"
         response = requests.post(url, json={"prompt": "hi", "max_tokens": 0})
