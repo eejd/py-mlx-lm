@@ -27,14 +27,17 @@ class TestToolParsing(unittest.TestCase):
     def test_json_tools_string_arguments(self):
         call = {"name": "weather", "arguments": json.dumps({"city": "Bogota"})}
         self.assertEqual(
-            json_tools.parse_tool_call(json.dumps(call))["arguments"], {"city": "Bogota"}
+            json_tools.parse_tool_call(json.dumps(call))["arguments"],
+            {"city": "Bogota"},
         )
         self.assertEqual(
             json_tools.parse_tool_call(json.dumps([call]))[0]["arguments"],
             {"city": "Bogota"},
         )
         with self.assertRaises(ValueError):
-            json_tools.parse_tool_call(json.dumps({"name": "weather", "arguments": "[]"}))
+            json_tools.parse_tool_call(
+                json.dumps({"name": "weather", "arguments": "[]"})
+            )
 
     def test_parsers(self):
         test_cases = [
@@ -1092,6 +1095,7 @@ class TestToolParsing(unittest.TestCase):
         f.flush()
         self.assertEqual(f.feed(call), ("", []))
         self.assertEqual(f.flush(), ("", [call]))
+
     def test_harmony_channels(self):
         # Channel-first (what gpt-oss emits) and recipient-first (what the
         # chat template writes back). The call text is what the state machine
