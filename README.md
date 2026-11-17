@@ -198,6 +198,12 @@ For models whose tool-call format is not inferred from their chat template,
 use `mlx_lm.server --tool-call-parser NAME` to select a parser explicitly.
 Available parser names are listed in `mlx_lm.server --help`.
 
+Chat templates that read tools from `xml_tools` instead of `tools` (SmolLM3)
+are fed the request's tools there automatically, and their `<tool_call>` JSON
+parser is inferred. SmolLM3 reasons by default and then often drops the
+`<tool_call>` wrapper; pass `"chat_template_kwargs": {"enable_thinking": false}`
+for reliable calls.
+
 ### Long Prompts and Generations 
 
 `mlx-lm` has some tools to scale efficiently to long prompts and generations:

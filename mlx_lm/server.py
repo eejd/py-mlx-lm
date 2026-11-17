@@ -623,6 +623,21 @@ class TimeBudget:
         raise StopIteration()
 
 
+def _tool_template_kwargs(tokenizer, tools) -> Dict[str, Any]:
+    """Extra chat template variables needed to render ``tools``.
+
+    Most templates read the standard ``tools`` variable. SmolLM3's template
+    instead reads ``xml_tools`` (a list rendered one entry per line), so for a
+    template that references it, pass the request's tools there. They go in as
+    dicts (the template stringifies them), which is how the model card passes
+    them; JSON strings made the model drop the <tool_call> wrapper.
+    """
+    template = getattr(tokenizer, "chat_template", None)
+    if tools and isinstance(template, str) and "xml_tools" in template:
+        return {"xml_tools": list(tools)}
+    return {}
+
+
 class ModelProvider:
     def __init__(self, cli_args: argparse.Namespace):
         """Load models on demand and persist them across the whole process."""
@@ -748,7 +763,11 @@ class ModelProvider:
                 messages, tokenize=False, add_generation_prompt=True
             )
             with_tools = tokenizer.apply_chat_template(
-                messages, tools=tools, tokenize=False, add_generation_prompt=True
+                messages,
+                tools=tools,
+                **_tool_template_kwargs(tokenizer, tools),
+                tokenize=False,
+                add_generation_prompt=True,
             )
             self.template_ignores_tools = without_tools == with_tools
             if (
@@ -948,7 +967,7 @@ class ResponseGenerator:
                 template_kwargs = dict(
                     tools=tools,
                     tokenize=True,
-                    **chat_template_args,
+                    **{**_tool_template_kwargs(tokenizer, tools), **chat_template_args},
                 )
                 if urls:
                     text = tokenizer.apply_chat_template(

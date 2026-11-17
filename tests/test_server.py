@@ -1683,6 +1683,24 @@ class TestTemplateToolProbe(unittest.TestCase):
         self.assertFalse(any("WARNING" in line for line in logs.output))
 
 
+class TestToolTemplateKwargs(unittest.TestCase):
+    TOOLS = [{"type": "function", "function": {"name": "f", "parameters": {}}}]
+
+    def test_xml_tools_template_receives_tools(self):
+        tokenizer = SimpleNamespace(chat_template="{{ xml_tools }}")
+        self.assertEqual(
+            server._tool_template_kwargs(tokenizer, self.TOOLS),
+            {"xml_tools": self.TOOLS},
+        )
+
+    def test_other_templates_and_no_tools_unchanged(self):
+        standard = SimpleNamespace(chat_template="{{ tools }}")
+        self.assertEqual(server._tool_template_kwargs(standard, self.TOOLS), {})
+        xml = SimpleNamespace(chat_template="{{ xml_tools }}")
+        self.assertEqual(server._tool_template_kwargs(xml, None), {})
+        self.assertEqual(server._tool_template_kwargs(mock.Mock(), self.TOOLS), {})
+
+
 class TestGenerationThreadDeath(unittest.TestCase):
     def _crashed_generator(self):
         with mock.patch.object(
