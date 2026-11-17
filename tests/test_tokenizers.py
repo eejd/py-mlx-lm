@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from huggingface_hub.errors import StrictDataclassFieldValidationError
@@ -246,6 +247,15 @@ class TestTokenizers(unittest.TestCase):
         )
         # No marker anywhere means no parser.
         self.assertIsNone(_infer_tool_parser(FakeTokenizer({"hello": 1})))
+
+    def test_infer_tool_parser_xml_tools_template(self):
+        # SmolLM3-style templates take tools through `xml_tools` and ask for
+        # <tool_call> JSON; no `tool_call.name` appears in the template.
+        tokenizer = SimpleNamespace(
+            chat_template="{% if xml_tools %}<tool_call>{% endif %}",
+            get_vocab=lambda: {},
+        )
+        self.assertEqual(_infer_tool_parser(tokenizer), "json_tools")
 
     def test_thinking(self):
         tokenizer_repo = "mlx-community/Qwen3-4B-4bit"

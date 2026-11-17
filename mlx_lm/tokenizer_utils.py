@@ -698,7 +698,9 @@ def _infer_tool_parser(tokenizer):
             return "muse_spark"
         elif "functools[" in chat_template:
             return "phi4_mini_json"
-        elif "<tool_call>" in chat_template and "tool_call.name" in chat_template:
+        elif "<tool_call>" in chat_template and (
+            "tool_call.name" in chat_template or "xml_tools" in chat_template
+        ):
             return "json_tools"
         elif (
             "Valid channels: analysis, commentary, final" in chat_template
